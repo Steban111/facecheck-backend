@@ -1,3 +1,17 @@
+import os
+# Desactivar GPUs y alertas pesadas de TensorFlow para ahorrar RAM
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
+import tensorflow as tf
+# Forzar a TensorFlow a consumir memoria de forma dinámica y no de golpe
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from deepface import DeepFace
