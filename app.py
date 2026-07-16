@@ -10,7 +10,9 @@ CORS(app)
 
 ROSTROS_DIR = os.path.join(os.path.dirname(__file__), "rostros")
 ASISTENCIAS_FILE = os.path.join(os.path.dirname(__file__), "asistencias.csv")
-
+# Forzar la creación de la carpeta al iniciar la aplicación en Render
+if not os.path.exists(ROSTROS_DIR):
+    os.makedirs(ROSTROS_DIR)
 def obtener_fecha_bonita_espanol():
     """Retorna la fecha en formato amigable, ej: 'Miércoles 16 de Julio'"""
     dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
