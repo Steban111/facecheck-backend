@@ -1,8 +1,8 @@
 import os
-import cv2
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app)
@@ -13,35 +13,39 @@ if not os.path.exists(ROSTROS_DIR):
 
 def comparar_imagenes(ruta_img1, ruta_img2):
     """
-    Compara dos imágenes de forma matemática usando histogramas.
-    ¡Ultra ligero, sin IA pesada, procesa en milisegundos y consume 0 RAM!
+    Compara dos imágenes de forma matemática usando histogramas con Pillow.
+    ¡Ultra ligero, sin OpenCV ni IA pesada, optimizado para servidores de 512MB!
     """
     try:
-        # Cargar imágenes en escala de grises
-        img1 = cv2.imread(ruta_img1, cv2.IMREAD_GRAYSCALE)
-        img2 = cv2.imread(ruta_img2, cv2.IMREAD_GRAYSCALE)
-        
-        if img1 is None or img2 is None:
-            return False, 0.0
+        # Cargar imágenes en escala de grises ('L') usando Pillow
+        img1 = Image.open(ruta_img1).convert('L')
+        img2 = Image.open(ruta_img2).convert('L')
 
-        # Redimensionar a un tamaño estándar (150x150 píxeles) para comparar con precisión
-        img1_res = cv2.resize(img1, (150, 150))
-        img2_res = cv2.resize(img2, (150, 150))
+        # Redimensionar a un tamaño estándar (150x150)
+        img1_res = img1.resize((150, 150))
+        img2_res = img2.resize((150, 150))
 
-        # Calcular histogramas para ver la distribución de luz y sombras en las facciones
-        hist1 = cv2.calcHist([img1_res], [0], None, [256], [0, 256])
-        hist2 = cv2.calcHist([img2_res], [0], None, [256], [0, 256])
+        # Obtener los histogramas directamente desde Pillow (lista de 256 valores)
+        hist1 = np.array(img1_res.histogram(), dtype=np.float32)
+        hist2 = np.array(img2_res.histogram(), dtype=np.float32)
+
+        # Normalizar los histogramas para evitar que los cambios de luz afecten la comparación
+        norm1 = hist1 / (np.sum(hist1) + 1e-6)
+        norm2 = hist2 / (np.sum(hist2) + 1e-6)
+
+        # Calcular la correlación de Pearson (equivalente matemático a cv2.compareHist)
+        mean1 = np.mean(norm1)
+        mean2 = np.mean(norm2)
         
-        # Normalizar para que los cambios de luz no afecten la comparación
-        cv2.normalize(hist1, hist1, 0, 1, cv2.NORM_MINMAX)
-        cv2.normalize(hist2, hist2, 0, 1, cv2.NORM_MINMAX)
+        num = np.sum((norm1 - mean1) * (norm2 - mean2))
+        den = np.sqrt(np.sum((norm1 - mean1) ** 2) * np.sum((norm2 - mean2) ** 2))
         
-        # Comparar qué tan parecidos son los dos rostros
-        similitud = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+        similitud = num / den if den != 0 else 0.0
         
         # Umbral de similitud (si es mayor a 65%, es la misma persona)
         autorizado = similitud > 0.65
         return autorizado, round(float(similitud), 4)
+        
     except Exception as e:
         print(f"❌ Error al comparar imágenes: {e}")
         return False, 0.0
