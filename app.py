@@ -118,7 +118,6 @@ def registrar_asistencia(usuario_carpeta):
     except Exception as e:
         print(f"❌ Error al registrar en Google Sheets: {e}")
 
-
 def comparar_imagenes(ruta_img1, ruta_img2):
     try:
         img1 = Image.open(ruta_img1).convert('L')
@@ -139,20 +138,18 @@ def comparar_imagenes(ruta_img1, ruta_img2):
         num = np.sum((norm1 - mean1) * (norm2 - mean2))
         den = np.sqrt(np.sum((norm1 - mean1) ** 2) * np.sum((norm2 - mean2) ** 2))
         
-      similitud = num / den if den != 0 else 0.0
+        similitud = num / den if den != 0 else 0.0
         
-        # 📢 Agrega el print para los logs de Render
+        # 📢 ESTO TE DIRÁ EN LOS LOGS DE RENDER CUÁNTO DA TU CARA REALMENTE
         print(f"DEBUG: Comparando. Similitud calculada: {similitud}")
         
-        # 🟢 Bajamos el umbral a 0.25 para que te deje pasar fácil con tu luz actual
+        # Bajamos un poquito a 0.25 para dar más margen de error con la luz
         autorizado = similitud > 0.25 
         return autorizado, round(float(similitud), 4)
         
     except Exception as e:
         print(f"❌ Error al comparar imágenes: {e}")
         return False, 0.0
-
-
 # ==========================================
 # 🛣️ RUTAS DEL SERVIDOR FLASK
 # ==========================================
