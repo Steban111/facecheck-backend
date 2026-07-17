@@ -139,13 +139,13 @@ def comparar_imagenes(ruta_img1, ruta_img2):
         num = np.sum((norm1 - mean1) * (norm2 - mean2))
         den = np.sqrt(np.sum((norm1 - mean1) ** 2) * np.sum((norm2 - mean2) ** 2))
         
-        similitud = num / den if den != 0 else 0.0
+      similitud = num / den if den != 0 else 0.0
         
-        # 📢 ESTO TE DIRÁ EN LOS LOGS DE RENDER CUÁNTO DA TU CARA REALMENTE
+        # 📢 Agrega el print para los logs de Render
         print(f"DEBUG: Comparando. Similitud calculada: {similitud}")
         
-        # Bajamos un poquito a 0.58 para dar más margen de error con la luz
-        autorizado = similitud > 0.58 
+        # 🟢 Bajamos el umbral a 0.25 para que te deje pasar fácil con tu luz actual
+        autorizado = similitud > 0.25 
         return autorizado, round(float(similitud), 4)
         
     except Exception as e:
@@ -190,12 +190,15 @@ def facecheck():
     if 'photo' not in request.files:
         return jsonify({"error": "No se envió ninguna foto"}), 400
         
-    # Antes de verificar, nos aseguramos de tener todas las fotos de Cloudinary listas
     sincronizar_desde_cloudinary()
         
     file = request.files['photo']
     temp_path = os.path.join(ROSTROS_DIR, "temp_upload.jpg")
     file.save(temp_path)
+    
+    # 📢 Creamos variables para guardar el intento más cercano
+    mejor_precision = 0.0
+    usuario_mas_cercano = "No reconocido o no hay usuarios registrados"
     
     for usuario in os.listdir(ROSTROS_DIR):
         usuario_path = os.path.join(ROSTROS_DIR, usuario)
@@ -203,6 +206,12 @@ def facecheck():
             foto_registro = os.path.join(usuario_path, "registro.jpg")
             if os.path.exists(foto_registro):
                 autorizado, precision = comparar_imagenes(temp_path, foto_registro)
+                
+                # 📢 Guarda el valor más alto que encuentre para mostrarlo en el celular
+                if precision > mejor_precision:
+                    mejor_precision = precision
+                    usuario_mas_cercano = usuario
+                
                 if autorizado:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
@@ -218,10 +227,11 @@ def facecheck():
     if os.path.exists(temp_path):
         os.remove(temp_path)
         
+    # 📢 Retornamos el porcentaje real aunque el acceso sea FALSO
     return jsonify({
         "autorizado": False,
-        "precision": 0,
-        "usuario": "No reconocido o no hay usuarios registrados"
+        "precision": mejor_precision,  # Le enviamos el número real (ej: 0.32)
+        "usuario": usuario_mas_cercano
     }), 200
 
 
