@@ -1,5 +1,8 @@
+gspread
+oauth2client
+cloudinary
+Pillow
 Flask
 Flask-Cors
 numpy
-Pillow
-gunicorn
+requests
