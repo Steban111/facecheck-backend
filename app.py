@@ -141,7 +141,11 @@ def comparar_imagenes(ruta_img1, ruta_img2):
         
         similitud = num / den if den != 0 else 0.0
         
-        autorizado = similitud > 0.65
+        # 📢 ESTO TE DIRÁ EN LOS LOGS DE RENDER CUÁNTO DA TU CARA REALMENTE
+        print(f"DEBUG: Comparando. Similitud calculada: {similitud}")
+        
+        # Bajamos un poquito a 0.58 para dar más margen de error con la luz
+        autorizado = similitud > 0.58 
         return autorizado, round(float(similitud), 4)
         
     except Exception as e:
