@@ -3,6 +3,9 @@ import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -11,29 +14,78 @@ ROSTROS_DIR = "rostros"
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
-def comparar_imagenes(ruta_img1, ruta_img2):
+# ==========================================
+# 📊 CONFIGURACIÓN DE GOOGLE SHEETS
+# ==========================================
+SCOPE = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive"
+]
+
+try:
+    print("⚡ Conectando con Google Sheets...")
+    creds = ServiceAccountCredentials.from_json_keyfile_name("credenciales.json", SCOPE)
+    client = gspread.authorize(creds)
+    sheet = client.open("Registro de Asistencias").sheet1
+    print("✅ ¡Conexión con Google Sheets establecida con éxito!")
+except Exception as e:
+    print(f"❌ Error crítico al conectar Google Sheets: {e}")
+    sheet = None
+
+
+def registrar_asistencia(usuario_carpeta):
     """
-    Compara dos imágenes de forma matemática usando histogramas con Pillow.
-    ¡Ultra ligero, sin OpenCV ni IA pesada, optimizado para servidores de 512MB!
+    Toma el nombre de la carpeta (ej: 'alexander_windy'), lo embellece
+    (ej: 'Alexander Windy') y registra el día, fecha y hora en Google Sheets.
     """
+    if sheet is None:
+        print("❌ No se puede registrar la asistencia: No hay conexión con Google Sheets.")
+        return
+
     try:
-        # Cargar imágenes en escala de grises ('L') usando Pillow
+        # Formatear el nombre para que se vea profesional en el Excel
+        nombre_bonito = usuario_carpeta.replace("_", " ").title()
+        
+        # Obtener fecha y hora actual del servidor
+        ahora = datetime.now()
+        
+        # Mapear el día de la semana a español
+        dias_espanol = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+        dia_semana = dias_espanol[ahora.weekday()]
+        
+        fecha_actual = ahora.strftime("%Y-%m-%d")
+        hora_actual = ahora.strftime("%H:%M:%S")
+        
+        # Preparar la fila para Google Sheets
+        nueva_fila = [nombre_bonito, dia_semana, fecha_actual, hora_actual]
+        
+        # Guardar en la nube
+        sheet.append_row(nueva_fila)
+        print(f"🚀 ¡Asistencia guardada en la nube para: {nombre_bonito}!")
+        
+    except Exception as e:
+        print(f"❌ Error al registrar en Google Sheets: {e}")
+
+
+# ==========================================
+# 🧠 ALGORITMO ULTRA-LIGERO DE COMPARACIÓN
+# ==========================================
+def comparar_imagenes(ruta_img1, ruta_img2):
+    try:
         img1 = Image.open(ruta_img1).convert('L')
         img2 = Image.open(ruta_img2).convert('L')
 
-        # Redimensionar a un tamaño estándar (150x150)
         img1_res = img1.resize((150, 150))
         img2_res = img2.resize((150, 150))
 
-        # Obtener los histogramas directamente desde Pillow (lista de 256 valores)
         hist1 = np.array(img1_res.histogram(), dtype=np.float32)
         hist2 = np.array(img2_res.histogram(), dtype=np.float32)
 
-        # Normalizar los histogramas para evitar que los cambios de luz afecten la comparación
         norm1 = hist1 / (np.sum(hist1) + 1e-6)
         norm2 = hist2 / (np.sum(hist2) + 1e-6)
 
-        # Calcular la correlación de Pearson (equivalente matemático a cv2.compareHist)
         mean1 = np.mean(norm1)
         mean2 = np.mean(norm2)
         
@@ -42,7 +94,6 @@ def comparar_imagenes(ruta_img1, ruta_img2):
         
         similitud = num / den if den != 0 else 0.0
         
-        # Umbral de similitud (si es mayor a 65%, es la misma persona)
         autorizado = similitud > 0.65
         return autorizado, round(float(similitud), 4)
         
@@ -50,11 +101,12 @@ def comparar_imagenes(ruta_img1, ruta_img2):
         print(f"❌ Error al comparar imágenes: {e}")
         return False, 0.0
 
+
+# ==========================================
+# 🛣️ RUTAS DEL SERVIDOR FLASK
+# ==========================================
 @app.route("/api/register", methods=["POST"])
 def register():
-    """
-    Ruta para registrar a un nuevo usuario guardando su foto
-    """
     if 'photo' not in request.files or 'name' not in request.form:
         return jsonify({"error": "Faltan datos"}), 400
         
@@ -65,15 +117,12 @@ def register():
     if not os.path.exists(usuario_dir):
         os.makedirs(usuario_dir)
         
-    # Guardar foto de registro
     file.save(os.path.join(usuario_dir, "registro.jpg"))
     return jsonify({"mensaje": f"Usuario {nombre} registrado con éxito"}), 200
 
+
 @app.route("/api/facecheck", methods=["POST"])
 def facecheck():
-    """
-    Ruta para verificar el rostro que envía el celular/Postman
-    """
     if 'photo' not in request.files:
         return jsonify({"error": "No se envió ninguna foto"}), 400
         
@@ -91,13 +140,17 @@ def facecheck():
                 if autorizado:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
+                    
+                    # 🔥 ¡AQUÍ OCURRE LA MAGIA! 🔥
+                    # Registramos la asistencia en Google Sheets automáticamente
+                    registrar_asistencia(usuario)
+                    
                     return jsonify({
                         "autorizado": True,
                         "usuario": usuario,
                         "precision": precision
                     }), 200
                     
-    # Si no coincide con ninguno o no hay usuarios
     if os.path.exists(temp_path):
         os.remove(temp_path)
         
@@ -107,12 +160,14 @@ def facecheck():
         "usuario": "No reconocido o no hay usuarios registrados"
     }), 200
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+
 @app.route('/ver_rostros', methods=['GET'])
 def ver_rostros():
-    import os
     if os.path.exists(ROSTROS_DIR):
         archivos = os.listdir(ROSTROS_DIR)
         return {"total_alumnos": len(archivos), "alumnos_registrados": archivos}, 200
     return {"error": "La carpeta de rostros no existe todavía"}, 404
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
