@@ -109,3 +109,10 @@ def facecheck():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+@app.route('/ver_rostros', methods=['GET'])
+def ver_rostros():
+    import os
+    if os.path.exists(ROSTROS_DIR):
+        archivos = os.listdir(ROSTROS_DIR)
+        return {"total_alumnos": len(archivos), "alumnos_registrados": archivos}, 200
+    return {"error": "La carpeta de rostros no existe todavía"}, 404
