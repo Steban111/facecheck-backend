@@ -1,8 +1,9 @@
-gspread
-oauth2client
-cloudinary
-Pillow
 Flask
-Flask-Cors
-numpy
-requests
+gunicorn
+cloudinary
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+gspread
+Pillow
