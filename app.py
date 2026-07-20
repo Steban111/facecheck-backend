@@ -60,9 +60,9 @@ USUARIOS_CONFIG = {
         "sheet_name": "Asistencia Rama 1", # Hoja de tu amigo
         "pin": "1302"
     },
-     "Steban": {
-        "sheet_name": "Registro de Asistencias", # Tu hoja predeterminada
-        "pin": "1888"
+     "Prueba": {
+        "sheet_name": "Asistencia Rama 2", # Tu hoja predeterminada
+        "pin": "1234"
     },
 }
 
