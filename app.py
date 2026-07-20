@@ -15,7 +15,8 @@ import cloudinary.uploader
 import cloudinary.api
 
 app = Flask(__name__)
-CORS(app)
+# Permitir peticiones desde cualquier origen y cliente móvil
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 ROSTROS_DIR = "rostros"
 if not os.path.exists(ROSTROS_DIR):
@@ -141,7 +142,6 @@ def extraer_y_normalizar_rostro(ruta_imagen):
     Retorna la imagen de la cara ecualizada y redimensionada a 128x128.
     """
     try:
-        # Cargar imagen en escala de grises
         img = cv2.imread(ruta_imagen, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
@@ -158,18 +158,14 @@ def extraer_y_normalizar_rostro(ruta_imagen):
         )
 
         if len(faces) == 0:
-            # Si no detecta con la imagen ecualizada, intentar en la original
             faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
             if len(faces) == 0:
                 return None
 
-        # Seleccionar la cara con mayor área (la más cercana a la cámara)
+        # Seleccionar la cara con mayor área
         x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
         
-        # Recortar solo el rostro detectado
         rostro_crop = img_equalized[y:y+h, x:x+w]
-        
-        # Redimensionar a tamaño uniforme
         rostro_final = cv2.resize(rostro_crop, (128, 128))
         return rostro_final
 
@@ -180,28 +176,23 @@ def extraer_y_normalizar_rostro(ruta_imagen):
 
 def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
     """
-    Capa 2: Compara los rasgos estructurales de ambos rostros recortados
-    usando correlación normalizada e inmunidad a iluminación.
+    Capa 2: Compara los rasgos estructurales de ambos rostros recortados.
     """
     try:
         rostro_cap = extraer_y_normalizar_rostro(ruta_captura)
         rostro_reg = extraer_y_normalizar_rostro(ruta_registro)
 
-        # Si en alguna de las dos fotos no se detectó un rostro claro
         if rostro_cap is None or rostro_reg is None:
             return 0.0
 
-        # Normalizar valores Z-score para eliminar diferencia de brillo
         arr1 = rostro_cap.astype(np.float32)
         arr2 = rostro_reg.astype(np.float32)
 
         arr1 = (arr1 - np.mean(arr1)) / (np.std(arr1) + 1e-6)
         arr2 = (arr2 - np.mean(arr2)) / (np.std(arr2) + 1e-6)
 
-        # Distancia entre los arreglos faciales
         distancia = np.linalg.norm(arr1 - arr2) / arr1.size
 
-        # Mapeo sigmoide ajustado para características de rostro estricto
         similitud_raw = 1.0 / (1.0 + np.exp((distancia - 0.022) * 120.0))
         precision_pct = round(float(similitud_raw) * 100.0, 2)
 
@@ -214,6 +205,15 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
 # ==========================================
 # 🛣️ RUTAS DEL SERVIDOR FLASK
 # ==========================================
+
+# Ruta Raíz para verificar conexión directa desde navegador o app
+@app.route("/", methods=["GET", "HEAD"])
+def status_check():
+    return jsonify({
+        "status": "online",
+        "mensaje": "Servidor Biométrico FaceCheck Activo 🚀"
+    }), 200
+
 
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -275,7 +275,6 @@ def facecheck():
     mejor_precision = 0.0
     mejor_usuario = "Desconocido"
     
-    # 🔍 Compara el rostro capturado con todos los registrados
     for usuario in os.listdir(ROSTROS_DIR):
         usuario_path = os.path.join(ROSTROS_DIR, usuario)
         if os.path.isdir(usuario_path):
@@ -291,7 +290,6 @@ def facecheck():
     if os.path.exists(temp_path):
         os.remove(temp_path)
 
-    # 🛡️ UMBRAL DE SEGURIDAD AJUSTADO (70.0%)
     UMBRAL_SEGURIDAD = 70.0
 
     if mejor_precision >= UMBRAL_SEGURIDAD:
