@@ -209,9 +209,10 @@ def register():
     file.save(local_path)
     
     try:
-        cloudinary.uploader.upload(
-            local_path, 
-            public_id = f"rostros/{nombre}/registro",
+       cloudinary.uploader.upload(
+            local_path,
+            public_id = "registro",
+            folder = f"rostros/{nombre}",
             overwrite = True
         )
         print(f"☁️ Foto de {nombre} respaldada con éxito en Cloudinary.")
