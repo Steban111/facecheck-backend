@@ -52,14 +52,18 @@ except Exception as e:
 # Base de datos provisional de usuarios y sus Hojas de Google Sheets
 # (Aquí puedes mapear cada usuario con el nombre exacto de su Hoja de Google)
 USUARIOS_CONFIG = {
-    "cristian": {
+    "Steban": {
         "sheet_name": "Registro de Asistencias", # Tu hoja predeterminada
-        "pin": "1234"
+        "pin": "1999"
     },
-    "amigo1": {
-        "sheet_name": "Asistencia Barrio Amigo 1", # Hoja de tu amigo
-        "pin": "5678"
-    }
+    "Liss": {
+        "sheet_name": "Asistencia Rama 1", # Hoja de tu amigo
+        "pin": "1302"
+    },
+     "Steban": {
+        "sheet_name": "Registro de Asistencias", # Tu hoja predeterminada
+        "pin": "1888"
+    },
 }
 
 # ==========================================
