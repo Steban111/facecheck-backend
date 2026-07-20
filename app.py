@@ -137,19 +137,13 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 
 
 def extraer_y_normalizar_rostro(ruta_imagen):
-    """
-    Capa 1: Detecta el rostro humano en la imagen y elimina fondo, cabello y luz.
-    Retorna la imagen de la cara ecualizada y redimensionada a 128x128.
-    """
     try:
         img = cv2.imread(ruta_imagen, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
 
-        # Corregir iluminación automáticamente
         img_equalized = cv2.equalizeHist(img)
 
-        # Detectar rostros
         faces = face_cascade.detectMultiScale(
             img_equalized,
             scaleFactor=1.1,
@@ -162,9 +156,7 @@ def extraer_y_normalizar_rostro(ruta_imagen):
             if len(faces) == 0:
                 return None
 
-        # Seleccionar la cara con mayor área
         x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
-        
         rostro_crop = img_equalized[y:y+h, x:x+w]
         rostro_final = cv2.resize(rostro_crop, (128, 128))
         return rostro_final
@@ -175,9 +167,6 @@ def extraer_y_normalizar_rostro(ruta_imagen):
 
 
 def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
-    """
-    Capa 2: Compara los rasgos estructurales de ambos rostros recortados.
-    """
     try:
         rostro_cap = extraer_y_normalizar_rostro(ruta_captura)
         rostro_reg = extraer_y_normalizar_rostro(ruta_registro)
@@ -203,10 +192,9 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         return 0.0
 
 # ==========================================
-# 🛣️ RUTAS DEL SERVIDOR FLASK
+# 🛣️ RUTAS DEL SERVIDOR FLASK (DOBLES)
 # ==========================================
 
-# Ruta Raíz para verificar conexión directa desde navegador o app
 @app.route("/", methods=["GET", "HEAD"])
 def status_check():
     return jsonify({
@@ -214,7 +202,8 @@ def status_check():
         "mensaje": "Servidor Biométrico FaceCheck Activo 🚀"
     }), 200
 
-
+# 🔑 LOGIN (Acepta /login y /api/login)
+@app.route("/login", methods=["POST"])
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.json or {}
@@ -229,7 +218,8 @@ def login():
     
     return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
 
-
+# 📝 REGISTRO (Acepta /register y /api/register)
+@app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
 def register():
     if 'photo' not in request.files or 'name' not in request.form:
@@ -258,7 +248,8 @@ def register():
 
     return jsonify({"mensaje": f"Usuario {nombre} registrado con éxito"}), 200
 
-
+# 👁️ FACECHECK (Acepta /facecheck y /api/facecheck)
+@app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
 def facecheck():
     if 'photo' not in request.files:
