@@ -53,15 +53,15 @@ except Exception as e:
 # (Aquí puedes mapear cada usuario con el nombre exacto de su Hoja de Google)
 USUARIOS_CONFIG = {
     "Steban": {
-        "sheet_name": "Registro de Asistencias", # Tu hoja predeterminada
+        "sheet_name": "Asistencia seminario sibimbe", # Tu hoja predeterminada
         "pin": "1999"
     },
     "Liss": {
-        "sheet_name": "Asistencia Rama 1", # Hoja de tu amigo
+        "sheet_name": "Asistencia seminario riberas", # Hoja de tu amigo
         "pin": "1302"
     },
      "Prueba": {
-        "sheet_name": "Asistencia Rama 2", # Tu hoja predeterminada
+        "sheet_name": "Pruebas", # Tu hoja predeterminada
         "pin": "1234"
     },
 }
