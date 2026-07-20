@@ -1,6 +1,7 @@
 import os
 import requests
 import numpy as np
+import cv2
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageOps
@@ -20,6 +21,9 @@ ROSTROS_DIR = "rostros"
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
+# Cargar detector de rostros frontal de OpenCV
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
 # ==========================================
 # ☁️ CONFIGURACIÓN DE CLOUDINARY
 # ==========================================
@@ -31,7 +35,7 @@ cloudinary.config(
 )
 
 # ==========================================
-# 📊 CONFIGURACIÓN DE GOOGLE SHEETS & BASE DE USUARIOS
+# 📊 GOOGLE SHEETS & BASE DE USUARIOS
 # ==========================================
 SCOPE = [
     "https://spreadsheets.google.com/feeds",
@@ -47,9 +51,8 @@ try:
     client = gspread.authorize(creds)
     print("✅ ¡Conexión con Google Sheets establecida con éxito!")
 except Exception as e:
-    print(f"❌ Error crítico al conectar Google Sheets: {e}")
+    print(f"❌ Error al conectar Google Sheets: {e}")
 
-# Base de datos provisional de usuarios y sus Hojas/Pestañas de Google Sheets
 USUARIOS_CONFIG = {
     "steban": {
         "sheet_name": "Asistencia seminario sibimbe",
@@ -109,7 +112,7 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
         return
 
     try:
-        doc = client.open("Registro de Asistencias") # Nombre de tu archivo principal
+        doc = client.open("Registro de Asistencias")
         try:
             sheet = doc.worksheet(target_sheet_name)
         except Exception:
@@ -132,46 +135,80 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
         print(f"❌ Error al registrar en Google Sheets ('{target_sheet_name}'): {e}")
 
 
-def calcular_similitud_robusta(ruta_img1, ruta_img2):
+def extraer_y_normalizar_rostro(ruta_imagen):
     """
-    Algoritmo mejorado de extracción de matriz facial.
-    Aplica normalización L2 y transformación sigmoidal para mapear
-    la distancia matemática a un porcentaje de precisión real.
+    Capa 1: Detecta el rostro humano en la imagen y elimina fondo, cabello y luz.
+    Retorna la imagen de la cara ecualizada y redimensionada a 128x128.
     """
     try:
-        # 1. Cargar imágenes, corregir orientación EXIF y redimensionar a un tamaño estándar
-        img1 = ImageOps.exif_transpose(Image.open(ruta_img1)).convert('L').resize((100, 100))
-        img2 = ImageOps.exif_transpose(Image.open(ruta_img2)).convert('L').resize((100, 100))
+        # Cargar imagen en escala de grises
+        img = cv2.imread(ruta_imagen, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return None
 
-        # 2. Ecualización adaptativa de contraste (reduce impacto de luces/sombras)
-        img1 = ImageOps.equalize(img1)
-        img2 = ImageOps.equalize(img2)
+        # Corregir iluminación automáticamente
+        img_equalized = cv2.equalizeHist(img)
 
-        arr1 = np.array(img1, dtype=np.float32)
-        arr2 = np.array(img2, dtype=np.float32)
+        # Detectar rostros
+        faces = face_cascade.detectMultiScale(
+            img_equalized,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(60, 60)
+        )
 
-        # 3. Recorte central enfocado en el rostro (remueve bordes/fondos)
-        h, w = arr1.shape
-        margin_h, margin_w = int(h * 0.15), int(w * 0.15)
-        crop1 = arr1[margin_h:h-margin_h, margin_w:w-margin_w]
-        crop2 = arr2[margin_h:h-margin_h, margin_w:w-margin_w]
+        if len(faces) == 0:
+            # Si no detecta con la imagen ecualizada, intentar en la original
+            faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+            if len(faces) == 0:
+                return None
 
-        # 4. Normalización Estandarizada Z-score
-        crop1 = (crop1 - np.mean(crop1)) / (np.std(crop1) + 1e-6)
-        crop2 = (crop2 - np.mean(crop2)) / (np.std(crop2) + 1e-6)
-
-        # 5. Distancia Euclidiana Normalizada
-        distancia = np.linalg.norm(crop1 - crop2) / crop1.size
-
-        # 6. Mapeo Sigmoide: Convierte distancia en Porcentaje de Similitud Coherente
-        # Si las imágenes son muy parecidas, distancia tiende a < 0.05
-        similitud_raw = 1.0 / (1.0 + np.exp( (distancia - 0.042) * 80.0 ))
+        # Seleccionar la cara con mayor área (la más cercana a la cámara)
+        x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
         
-        precision_pct = round(float(similitud_raw) * 100.0, 2)
-        return precision_pct
+        # Recortar solo el rostro detectado
+        rostro_crop = img_equalized[y:y+h, x:x+w]
         
+        # Redimensionar a tamaño uniforme
+        rostro_final = cv2.resize(rostro_crop, (128, 128))
+        return rostro_final
+
     except Exception as e:
-        print(f"❌ Error al comparar imágenes: {e}")
+        print(f"❌ Error al procesar rostro: {e}")
+        return None
+
+
+def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
+    """
+    Capa 2: Compara los rasgos estructurales de ambos rostros recortados
+    usando correlación normalizada e inmunidad a iluminación.
+    """
+    try:
+        rostro_cap = extraer_y_normalizar_rostro(ruta_captura)
+        rostro_reg = extraer_y_normalizar_rostro(ruta_registro)
+
+        # Si en alguna de las dos fotos no se detectó un rostro claro
+        if rostro_cap is None or rostro_reg is None:
+            return 0.0
+
+        # Normalizar valores Z-score para eliminar diferencia de brillo
+        arr1 = rostro_cap.astype(np.float32)
+        arr2 = rostro_reg.astype(np.float32)
+
+        arr1 = (arr1 - np.mean(arr1)) / (np.std(arr1) + 1e-6)
+        arr2 = (arr2 - np.mean(arr2)) / (np.std(arr2) + 1e-6)
+
+        # Distancia entre los arreglos faciales
+        distancia = np.linalg.norm(arr1 - arr2) / arr1.size
+
+        # Mapeo sigmoide ajustado para características de rostro estricto
+        similitud_raw = 1.0 / (1.0 + np.exp((distancia - 0.022) * 120.0))
+        precision_pct = round(float(similitud_raw) * 100.0, 2)
+
+        return precision_pct
+
+    except Exception as e:
+        print(f"❌ Error en comparación biométrica: {e}")
         return 0.0
 
 # ==========================================
@@ -209,7 +246,7 @@ def register():
     file.save(local_path)
     
     try:
-       cloudinary.uploader.upload(
+        cloudinary.uploader.upload(
             local_path,
             public_id = "registro",
             folder = f"rostros/{nombre}",
@@ -238,14 +275,14 @@ def facecheck():
     mejor_precision = 0.0
     mejor_usuario = "Desconocido"
     
-    # 🔍 EVALUACIÓN COMPLETA: Compara con TODOS antes de decidir
+    # 🔍 Compara el rostro capturado con todos los registrados
     for usuario in os.listdir(ROSTROS_DIR):
         usuario_path = os.path.join(ROSTROS_DIR, usuario)
         if os.path.isdir(usuario_path):
             foto_registro = os.path.join(usuario_path, "registro.jpg")
             if os.path.exists(foto_registro):
-                precision = calcular_similitud_robusta(temp_path, foto_registro)
-                print(f"DEBUG: Evaluando {usuario}. Resultado: {precision}%")
+                precision = calcular_similitud_facial_avanzada(temp_path, foto_registro)
+                print(f"DEBUG: Evaluando {usuario}. Resultado facial: {precision}%")
                 
                 if precision > mejor_precision:
                     mejor_precision = precision
@@ -254,8 +291,8 @@ def facecheck():
     if os.path.exists(temp_path):
         os.remove(temp_path)
 
-    # 🛡️ UMBRAL DE SEGURIDAD AJUSTADO (65.0%)
-    UMBRAL_SEGURIDAD = 65.0
+    # 🛡️ UMBRAL DE SEGURIDAD AJUSTADO (70.0%)
+    UMBRAL_SEGURIDAD = 70.0
 
     if mejor_precision >= UMBRAL_SEGURIDAD:
         registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
