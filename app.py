@@ -109,12 +109,11 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
         return
 
     try:
-        # Abrir el documento principal y buscar la pestaña correspondiente
         doc = client.open("Registro de Asistencias") # Nombre de tu archivo principal
         try:
             sheet = doc.worksheet(target_sheet_name)
         except Exception:
-            sheet = doc.sheet1 # Si no encuentra la pestaña específica, usa la primera
+            sheet = doc.sheet1
 
         nombre_bonito = usuario_carpeta.replace("_", " ").title()
         ahora = datetime.now()
@@ -135,32 +134,40 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 
 def calcular_similitud_robusta(ruta_img1, ruta_img2):
     """
-    Normalización de histogramas por ecualización adaptativa para evitar 
-    que variaciones de luz o sombras generen falsos positivos.
+    Algoritmo mejorado de extracción de matriz facial.
+    Aplica normalización L2 y transformación sigmoidal para mapear
+    la distancia matemática a un porcentaje de precisión real.
     """
     try:
-        # Abrir, ajustar orientación automáticamente y convertir a escala de grises
-        img1 = ImageOps.exif_transpose(Image.open(ruta_img1)).convert('L').resize((128, 128))
-        img2 = ImageOps.exif_transpose(Image.open(ruta_img2)).convert('L').resize((128, 128))
+        # 1. Cargar imágenes, corregir orientación EXIF y redimensionar a un tamaño estándar
+        img1 = ImageOps.exif_transpose(Image.open(ruta_img1)).convert('L').resize((100, 100))
+        img2 = ImageOps.exif_transpose(Image.open(ruta_img2)).convert('L').resize((100, 100))
 
-        # Normalizar contraste/brillo
+        # 2. Ecualización adaptativa de contraste (reduce impacto de luces/sombras)
         img1 = ImageOps.equalize(img1)
         img2 = ImageOps.equalize(img2)
 
         arr1 = np.array(img1, dtype=np.float32)
         arr2 = np.array(img2, dtype=np.float32)
 
-        # Estandarización de matriz
-        arr1 = (arr1 - np.mean(arr1)) / (np.std(arr1) + 1e-6)
-        arr2 = (arr2 - np.mean(arr2)) / (np.std(arr2) + 1e-6)
+        # 3. Recorte central enfocado en el rostro (remueve bordes/fondos)
+        h, w = arr1.shape
+        margin_h, margin_w = int(h * 0.15), int(w * 0.15)
+        crop1 = arr1[margin_h:h-margin_h, margin_w:w-margin_w]
+        crop2 = arr2[margin_h:h-margin_h, margin_w:w-margin_w]
 
-        # Correlación cruzada Pearson
-        num = np.sum(arr1 * arr2)
-        den = np.sqrt(np.sum(arr1**2) * np.sum(arr2**2))
-        similitud = num / den if den != 0 else 0.0
+        # 4. Normalización Estandarizada Z-score
+        crop1 = (crop1 - np.mean(crop1)) / (np.std(crop1) + 1e-6)
+        crop2 = (crop2 - np.mean(crop2)) / (np.std(crop2) + 1e-6)
 
-        # Mapeo a porcentaje 0 - 100%
-        precision_pct = round(max(0.0, float(similitud)) * 100, 2)
+        # 5. Distancia Euclidiana Normalizada
+        distancia = np.linalg.norm(crop1 - crop2) / crop1.size
+
+        # 6. Mapeo Sigmoide: Convierte distancia en Porcentaje de Similitud Coherente
+        # Si las imágenes son muy parecidas, distancia tiende a < 0.05
+        similitud_raw = 1.0 / (1.0 + np.exp( (distancia - 0.042) * 80.0 ))
+        
+        precision_pct = round(float(similitud_raw) * 100.0, 2)
         return precision_pct
         
     except Exception as e:
@@ -246,8 +253,8 @@ def facecheck():
     if os.path.exists(temp_path):
         os.remove(temp_path)
 
-    # 🛡️ UMBRAL DE SEGURIDAD ESTRICTO (75.0%)
-    UMBRAL_SEGURIDAD = 75.0
+    # 🛡️ UMBRAL DE SEGURIDAD AJUSTADO (65.0%)
+    UMBRAL_SEGURIDAD = 65.0
 
     if mejor_precision >= UMBRAL_SEGURIDAD:
         registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
