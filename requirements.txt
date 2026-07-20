@@ -10,3 +10,5 @@ gspread
 Pillow
 numpy
 oauth2client
+requests
+opencv-contrib-python-headless
