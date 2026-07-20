@@ -3,7 +3,7 @@ import requests
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from PIL import Image
+from PIL import Image, ImageOps
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
@@ -49,21 +49,20 @@ try:
 except Exception as e:
     print(f"❌ Error crítico al conectar Google Sheets: {e}")
 
-# Base de datos provisional de usuarios y sus Hojas de Google Sheets
-# (Aquí puedes mapear cada usuario con el nombre exacto de su Hoja de Google)
+# Base de datos provisional de usuarios y sus Hojas/Pestañas de Google Sheets
 USUARIOS_CONFIG = {
-    "Steban": {
-        "sheet_name": "Asistencia seminario sibimbe", # Tu hoja predeterminada
+    "steban": {
+        "sheet_name": "Asistencia seminario sibimbe",
         "pin": "1999"
     },
-    "Liss": {
-        "sheet_name": "Asistencia seminario riberas", # Hoja de tu amigo
+    "liss": {
+        "sheet_name": "Asistencia seminario riberas",
         "pin": "1302"
     },
-     "Prueba": {
-        "sheet_name": "Pruebas", # Tu hoja predeterminada
+    "prueba": {
+        "sheet_name": "Pruebas",
         "pin": "1234"
-    },
+    }
 }
 
 # ==========================================
@@ -104,13 +103,19 @@ def sincronizar_desde_cloudinary():
         print(f"❌ Error al sincronizar con Cloudinary: {e}")
 
 
-def registrar_asistencia(usuario_carpeta, target_sheet_name="Registro de Asistencias"):
+def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
     if client is None:
         print("❌ No se puede registrar la asistencia: No hay conexión con Google Sheets.")
         return
 
     try:
-        sheet = client.open(target_sheet_name).sheet1
+        # Abrir el documento principal y buscar la pestaña correspondiente
+        doc = client.open("Registro de Asistencias") # Nombre de tu archivo principal
+        try:
+            sheet = doc.worksheet(target_sheet_name)
+        except Exception:
+            sheet = doc.sheet1 # Si no encuentra la pestaña específica, usa la primera
+
         nombre_bonito = usuario_carpeta.replace("_", " ").title()
         ahora = datetime.now()
         
@@ -122,45 +127,45 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Registro de Asisten
         
         nueva_fila = [nombre_bonito, dia_semana, fecha_actual, hora_actual]
         sheet.append_row(nueva_fila)
-        print(f"🚀 ¡Asistencia guardada en la hoja '{target_sheet_name}' para: {nombre_bonito}!")
+        print(f"🚀 ¡Asistencia guardada en la pestaña '{target_sheet_name}' para: {nombre_bonito}!")
         
     except Exception as e:
         print(f"❌ Error al registrar en Google Sheets ('{target_sheet_name}'): {e}")
 
 
-def comparar_imagenes(ruta_img1, ruta_img2):
+def calcular_similitud_robusta(ruta_img1, ruta_img2):
     """
-    Comparación por bloques matriciales normalizados + Histograma
-    para mayor estabilidad contra cambios de luz.
+    Normalización de histogramas por ecualización adaptativa para evitar 
+    que variaciones de luz o sombras generen falsos positivos.
     """
     try:
-        img1 = Image.open(ruta_img1).convert('L').resize((128, 128))
-        img2 = Image.open(ruta_img2).convert('L').resize((128, 128))
+        # Abrir, ajustar orientación automáticamente y convertir a escala de grises
+        img1 = ImageOps.exif_transpose(Image.open(ruta_img1)).convert('L').resize((128, 128))
+        img2 = ImageOps.exif_transpose(Image.open(ruta_img2)).convert('L').resize((128, 128))
+
+        # Normalizar contraste/brillo
+        img1 = ImageOps.equalize(img1)
+        img2 = ImageOps.equalize(img2)
 
         arr1 = np.array(img1, dtype=np.float32)
         arr2 = np.array(img2, dtype=np.float32)
 
-        # Normalizar variaciones de iluminación globales
+        # Estandarización de matriz
         arr1 = (arr1 - np.mean(arr1)) / (np.std(arr1) + 1e-6)
         arr2 = (arr2 - np.mean(arr2)) / (np.std(arr2) + 1e-6)
 
-        # Correlación de Pearson
+        # Correlación cruzada Pearson
         num = np.sum(arr1 * arr2)
         den = np.sqrt(np.sum(arr1**2) * np.sum(arr2**2))
         similitud = num / den if den != 0 else 0.0
 
         # Mapeo a porcentaje 0 - 100%
         precision_pct = round(max(0.0, float(similitud)) * 100, 2)
-        
-        print(f"DEBUG: Comparando. Similitud calculada: {precision_pct}%")
-        
-        # Umbral estricto para evitar falsos positivos
-        autorizado = precision_pct > 68.0 
-        return autorizado, precision_pct
+        return precision_pct
         
     except Exception as e:
         print(f"❌ Error al comparar imágenes: {e}")
-        return False, 0.0
+        return 0.0
 
 # ==========================================
 # 🛣️ RUTAS DEL SERVIDOR FLASK
@@ -214,8 +219,7 @@ def facecheck():
     if 'photo' not in request.files:
         return jsonify({"error": "No se envió ninguna foto"}), 400
         
-    # Obtener qué hoja de Excel se debe utilizar (si el cliente envía la variable)
-    target_sheet = request.form.get("sheet_name", "Registro de Asistencias")
+    target_sheet = request.form.get("sheet_name", "Pruebas")
 
     sincronizar_desde_cloudinary()
         
@@ -224,41 +228,40 @@ def facecheck():
     file.save(temp_path)
     
     mejor_precision = 0.0
-    usuario_mas_cercano = "Desconocido"
-    match_encontrado = False
+    mejor_usuario = "Desconocido"
     
+    # 🔍 EVALUACIÓN COMPLETA: Compara con TODOS antes de decidir
     for usuario in os.listdir(ROSTROS_DIR):
         usuario_path = os.path.join(ROSTROS_DIR, usuario)
         if os.path.isdir(usuario_path):
             foto_registro = os.path.join(usuario_path, "registro.jpg")
             if os.path.exists(foto_registro):
-                autorizado, precision = comparar_imagenes(temp_path, foto_registro)
+                precision = calcular_similitud_robusta(temp_path, foto_registro)
+                print(f"DEBUG: Evaluando {usuario}. Resultado: {precision}%")
                 
                 if precision > mejor_precision:
                     mejor_precision = precision
-                    usuario_mas_cercano = usuario
-                
-                if autorizado:
-                    match_encontrado = True
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-                    
-                    registrar_asistencia(usuario, target_sheet_name=target_sheet)
-                    
-                    return jsonify({
-                        "autorizado": True,
-                        "usuario": usuario.replace("_", " ").title(),
-                        "precision": precision
-                    }), 200
-                    
+                    mejor_usuario = usuario
+
     if os.path.exists(temp_path):
         os.remove(temp_path)
-        
-    return jsonify({
-        "autorizado": False,
-        "precision": mejor_precision,
-        "usuario": usuario_mas_cercano.replace("_", " ").title() if mejor_precision > 0 else "Desconocido"
-    }), 200
+
+    # 🛡️ UMBRAL DE SEGURIDAD ESTRICTO (75.0%)
+    UMBRAL_SEGURIDAD = 75.0
+
+    if mejor_precision >= UMBRAL_SEGURIDAD:
+        registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
+        return jsonify({
+            "autorizado": True,
+            "usuario": mejor_usuario.replace("_", " ").title(),
+            "precision": mejor_precision
+        }), 200
+    else:
+        return jsonify({
+            "autorizado": False,
+            "precision": mejor_precision,
+            "usuario": mejor_usuario.replace("_", " ").title() if mejor_precision > 0 else "Desconocido"
+        }), 200
 
 
 @app.route('/ver_rostros', methods=['GET'])
