@@ -15,7 +15,6 @@ import cloudinary.uploader
 import cloudinary.api
 
 app = Flask(__name__)
-# Permitir peticiones desde cualquier origen y cliente móvil
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 ROSTROS_DIR = "rostros"
@@ -79,13 +78,21 @@ USUARIOS_CONFIG = {
 }
 
 # ==========================================
-# 🔄 FUNCIONES DE APOYO Y SINCRONIZACIÓN
+# 🔄 FUNCIONES DE APOYO Y CORRECCIÓN DE FOTO
 # ==========================================
+
+def arreglar_orientacion_imagen(ruta_imagen):
+    """ Corrige la rotación EXIF típica de los celulares """
+    try:
+        image = Image.open(ruta_imagen)
+        image = ImageOps.exif_transpose(image)
+        image.save(ruta_imagen)
+    except Exception as e:
+        print(f"⚠️ No se pudo ajustar la orientación de la imagen: {e}")
+
+
 def sincronizar_desde_cloudinary():
-    """
-    Si Render se reinicia y borra las fotos locales, esta función
-    descarga automáticamente todas las fotos guardadas en Cloudinary.
-    """
+    """ Descarga los rostros de Cloudinary si el disco de Render está vacío """
     try:
         carpetas_locales = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d))]
         if len(carpetas_locales) > 0:
@@ -107,8 +114,10 @@ def sincronizar_desde_cloudinary():
                 
                 response = requests.get(url)
                 if response.status_code == 200:
-                    with open(os.path.join(usuario_dir, "registro.jpg"), "wb") as f:
+                    dest_file = os.path.join(usuario_dir, "registro.jpg")
+                    with open(dest_file, "wb") as f:
                         f.write(response.content)
+                    arreglar_orientacion_imagen(dest_file)
                     print(f"📥 Rostro de '{nombre_usuario}' recuperado con éxito.")
                     
         print("✅ Sincronización completa.")
@@ -147,6 +156,7 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 
 def extraer_y_normalizar_rostro(ruta_imagen):
     try:
+        arreglar_orientacion_imagen(ruta_imagen)
         img = cv2.imread(ruta_imagen, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
@@ -156,13 +166,14 @@ def extraer_y_normalizar_rostro(ruta_imagen):
         faces = face_cascade.detectMultiScale(
             img_equalized,
             scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(60, 60)
+            minNeighbors=4,
+            minSize=(40, 40)
         )
 
         if len(faces) == 0:
-            faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+            faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=4, minSize=(40, 40))
             if len(faces) == 0:
+                print(f"⚠️ No se detectó ninguna cara en: {ruta_imagen}")
                 return None
 
         x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
@@ -181,6 +192,7 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         rostro_reg = extraer_y_normalizar_rostro(ruta_registro)
 
         if rostro_cap is None or rostro_reg is None:
+            print("⚠️ Uno de los dos rostros no se pudo recortar/detectar.")
             return 0.0
 
         arr1 = rostro_cap.astype(np.float32)
@@ -201,7 +213,7 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         return 0.0
 
 # ==========================================
-# 🛣️ RUTAS DEL SERVIDOR FLASK (DOBLES/COMPATIBLES)
+# 🛣️ RUTAS DEL SERVIDOR FLASK
 # ==========================================
 
 @app.route("/", methods=["GET", "HEAD"])
@@ -211,7 +223,6 @@ def status_check():
         "mensaje": "Servidor Biométrico FaceCheck Activo 🚀"
     }), 200
 
-# 🔑 LOGIN (Acepta /login y /api/login)
 @app.route("/login", methods=["POST"])
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -227,7 +238,6 @@ def login():
     
     return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
 
-# 📝 REGISTRO DE ROSTRO (Acepta /register, /api/register y /api/register-face)
 @app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
 @app.route("/api/register-face", methods=["POST"])
@@ -245,20 +255,22 @@ def register():
     local_path = os.path.join(usuario_dir, "registro.jpg")
     file.save(local_path)
     
+    # Orientar la foto correctamente
+    arreglar_orientacion_imagen(local_path)
+    
     try:
-        cloudinary.uploader.upload(
+        upload_result = cloudinary.uploader.upload(
             local_path,
             public_id = "registro",
             folder = f"rostros/{nombre}",
             overwrite = True
         )
-        print(f"☁️ Foto de {nombre} respaldada con éxito en Cloudinary.")
+        print(f"☁️ Foto de {nombre} respaldada con éxito en Cloudinary: {upload_result.get('secure_url')}")
     except Exception as e:
         print(f"❌ Error al subir a Cloudinary: {e}")
 
     return jsonify({"mensaje": f"Usuario {nombre} registrado con éxito"}), 200
 
-# 👁️ FACECHECK / VERIFICAR ASISTENCIA (Acepta /facecheck, /api/facecheck y /api/check-attendance)
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
 @app.route("/api/check-attendance", methods=["POST"])
@@ -273,6 +285,8 @@ def facecheck():
     file = request.files['photo']
     temp_path = os.path.join(ROSTROS_DIR, "temp_upload.jpg")
     file.save(temp_path)
+    
+    arreglar_orientacion_imagen(temp_path)
     
     mejor_precision = 0.0
     mejor_usuario = "Desconocido"
@@ -292,7 +306,7 @@ def facecheck():
     if os.path.exists(temp_path):
         os.remove(temp_path)
 
-    UMBRAL_SEGURIDAD = 70.0
+    UMBRAL_SEGURIDAD = 60.0
 
     if mejor_precision >= UMBRAL_SEGURIDAD:
         registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
@@ -308,7 +322,6 @@ def facecheck():
             "usuario": mejor_usuario.replace("_", " ").title() if mejor_precision > 0 else "Desconocido"
         }), 200
 
-
 @app.route('/ver_rostros', methods=['GET'])
 def ver_rostros():
     sincronizar_desde_cloudinary()
@@ -317,9 +330,7 @@ def ver_rostros():
         return {"total_alumnos": len(archivos), "alumnos_registrados": archivos}, 200
     return {"error": "La carpeta de rostros no existe todavía"}, 404
 
-
 if __name__ == "__main__":
     sincronizar_desde_cloudinary()
-    # Asignación automática del puerto de Render (PORT) o 10000 por defecto
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
