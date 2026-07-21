@@ -11,4 +11,4 @@ Pillow
 numpy
 oauth2client
 requests
-opencv-python-headless
+opencv-python-headless==4.8.1.78
