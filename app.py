@@ -192,7 +192,7 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         return 0.0
 
 # ==========================================
-# 🛣️ RUTAS DEL SERVIDOR FLASK (DOBLES)
+# 🛣️ RUTAS DEL SERVIDOR FLASK (DOBLES/COMPATIBLES)
 # ==========================================
 
 @app.route("/", methods=["GET", "HEAD"])
@@ -218,9 +218,10 @@ def login():
     
     return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
 
-# 📝 REGISTRO (Acepta /register y /api/register)
+# 📝 REGISTRO DE ROSTRO (Acepta /register, /api/register y /api/register-face)
 @app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
+@app.route("/api/register-face", methods=["POST"])
 def register():
     if 'photo' not in request.files or 'name' not in request.form:
         return jsonify({"error": "Faltan datos"}), 400
@@ -248,9 +249,10 @@ def register():
 
     return jsonify({"mensaje": f"Usuario {nombre} registrado con éxito"}), 200
 
-# 👁️ FACECHECK (Acepta /facecheck y /api/facecheck)
+# 👁️ FACECHECK / VERIFICAR ASISTENCIA (Acepta /facecheck, /api/facecheck y /api/check-attendance)
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
+@app.route("/api/check-attendance", methods=["POST"])
 def facecheck():
     if 'photo' not in request.files:
         return jsonify({"error": "No se envió ninguna foto"}), 400
@@ -309,4 +311,6 @@ def ver_rostros():
 
 if __name__ == "__main__":
     sincronizar_desde_cloudinary()
-    app.run(host="0.0.0.0", port=10000)
+    # Asignación automática del puerto de Render (PORT) o 10000 por defecto
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
