@@ -196,30 +196,47 @@ def extraer_y_normalizar_rostro(ruta_imagen):
         return None
 
 
-def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
-    try:
-        rostro_cap = extraer_y_normalizar_rostro(ruta_captura)
-        rostro_reg = extraer_y_normalizar_rostro(ruta_registro)
+# Exigencia alta: Si no se parece en un 85% real, NO PASA
+    UMBRAL_SEGURIDAD = 85.0
 
-        if rostro_cap is None or rostro_reg is None:
-            return 0.0
+    print(f"🔎 Resultado final para {mejor_usuario}: {mejor_precision}%")
 
-        arr1 = rostro_cap.astype(np.float32)
-        arr2 = rostro_reg.astype(np.float32)
+    if mejor_precision >= UMBRAL_SEGURIDAD:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
+        return jsonify({
+            "autorizado": True,
+            "usuario": mejor_usuario.replace("_", " ").title(),
+            "precision": mejor_precision
+        }), 200
+    else:
+        # 🚨 Si no pasa, guardamos la foto en no_registrados
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nombre_no_reg = f"desconocido_{timestamp}.jpg"
+        path_no_reg = os.path.join(NO_REGISTRADOS_DIR, nombre_no_reg)
+        
+        if os.path.exists(temp_path):
+            shutil.move(temp_path, path_no_reg)
+        
+        try:
+            cloudinary.uploader.upload(
+                path_no_reg,
+                public_id = f"desconocido_{timestamp}",
+                folder = "rostros/no_registrados",
+                overwrite = False
+            )
+            print(f"⚠️ Foto de rostro no reconocido guardada: {nombre_no_reg}")
+        except Exception as e:
+            print(f"❌ Error al subir no reconocido: {e}")
 
-        arr1 = (arr1 - np.mean(arr1)) / (np.std(arr1) + 1e-6)
-        arr2 = (arr2 - np.mean(arr2)) / (np.std(arr2) + 1e-6)
-
-        distancia = np.linalg.norm(arr1 - arr2) / arr1.size
-
-        similitud_raw = 1.0 / (1.0 + np.exp((distancia - 0.022) * 120.0))
-        precision_pct = round(float(similitud_raw) * 100.0, 2)
-
-        return precision_pct
-
-    except Exception as e:
-        print(f"❌ Error biométrico: {e}")
-        return 0.0
+        return jsonify({
+            "autorizado": False,
+            "mensaje": "No registrado",
+            "precision": mejor_precision,
+            "usuario": "No registrado"
+        }), 200
 
 # ==========================================
 # 🛣️ RUTAS DEL SERVIDOR FLASK
