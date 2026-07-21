@@ -22,8 +22,17 @@ ROSTROS_DIR = "rostros"
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
-# Cargar detector de rostros frontal de OpenCV
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+# Cargar o descargar el XML de Haar Cascade de manera segura
+xml_filename = "haarcascade_frontalface_default.xml"
+if not os.path.exists(xml_filename):
+    print("📥 Descargando archivo Haar Cascade...")
+    url_cascade = "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
+    res = requests.get(url_cascade)
+    with open(xml_filename, "wb") as f:
+        f.write(res.content)
+    print("✅ Haar Cascade descargado exitosamente.")
+
+face_cascade = cv2.CascadeClassifier(xml_filename)
 
 # ==========================================
 # ☁️ CONFIGURACIÓN DE CLOUDINARY
