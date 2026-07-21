@@ -38,9 +38,9 @@ face_cascade = cv2.CascadeClassifier(xml_filename)
 # ☁️ CONFIGURACIÓN DE CLOUDINARY
 # ==========================================
 cloudinary.config(
-    cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "TU_CLOUD_NAME_AQUÍ"),
-    api_key = os.environ.get("CLOUDINARY_API_KEY", "TU_API_KEY_AQUÍ"),
-    api_secret = os.environ.get("CLOUDINARY_API_SECRET", "TU_API_SECRET_AQUÍ"),
+    cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "n04i6zmx"),
+    api_key = os.environ.get("CLOUDINARY_API_KEY", "922889323116662"),
+    api_secret = os.environ.get("CLOUDINARY_API_SECRET", "G8LWZb4xv_gwWuEh9xg8JV0veaE"),
     secure = True
 )
 
