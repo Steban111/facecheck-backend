@@ -1,4 +1,5 @@
 import os
+import shutil
 import requests
 import numpy as np
 import cv2
@@ -18,10 +19,14 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 ROSTROS_DIR = "rostros"
-if not os.path.exists(ROSTROS_DIR):
-    os.makedirs(ROSTROS_DIR)
+NO_REGISTRADOS_DIR = os.path.join(ROSTROS_DIR, "no_registrados")
 
-# Cargar o descargar el XML de Haar Cascade de manera segura
+# Crear carpetas base
+for directo in [ROSTROS_DIR, NO_REGISTRADOS_DIR]:
+    if not os.path.exists(directo):
+        os.makedirs(directo)
+
+# Cargar o descargar el XML de Haar Cascade
 xml_filename = "haarcascade_frontalface_default.xml"
 if not os.path.exists(xml_filename):
     print("📥 Descargando archivo Haar Cascade...")
@@ -62,6 +67,7 @@ try:
 except Exception as e:
     print(f"❌ Error al conectar Google Sheets: {e}")
 
+# 📌 AQUÍ AGREGAS O EDITAS TUS USUARIOS/PROFESORES
 USUARIOS_CONFIG = {
     "steban": {
         "sheet_name": "Asistencia seminario sibimbe",
@@ -78,11 +84,11 @@ USUARIOS_CONFIG = {
 }
 
 # ==========================================
-# 🔄 FUNCIONES DE APOYO Y CORRECCIÓN DE FOTO
+# 🔄 FUNCIONES DE APOYO Y CORRECCIÓN
 # ==========================================
 
 def arreglar_orientacion_imagen(ruta_imagen):
-    """ Corrige la rotación EXIF típica de los celulares """
+    """ Corrige la rotación EXIF típica de las fotos tomadas en móviles """
     try:
         image = Image.open(ruta_imagen)
         image = ImageOps.exif_transpose(image)
@@ -92,9 +98,13 @@ def arreglar_orientacion_imagen(ruta_imagen):
 
 
 def sincronizar_desde_cloudinary():
-    """ Descarga los rostros de Cloudinary si el disco de Render está vacío """
+    """ Descarga los rostros de Cloudinary si el disco local de Render está vacío """
     try:
-        carpetas_locales = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d))]
+        # Ignoramos la carpeta 'no_registrados' al contar carpetas de alumnos
+        carpetas_locales = [
+            d for d in os.listdir(ROSTROS_DIR) 
+            if os.path.isdir(os.path.join(ROSTROS_DIR, d)) and d != "no_registrados"
+        ]
         if len(carpetas_locales) > 0:
             return
 
@@ -106,7 +116,7 @@ def sincronizar_desde_cloudinary():
             url = resource["secure_url"]
             
             partes = public_id.split('/')
-            if len(partes) >= 3:
+            if len(partes) >= 3 and partes[1] != "no_registrados":
                 nombre_usuario = partes[1]
                 usuario_dir = os.path.join(ROSTROS_DIR, nombre_usuario)
                 if not os.path.exists(usuario_dir):
@@ -127,7 +137,7 @@ def sincronizar_desde_cloudinary():
 
 def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
     if client is None:
-        print("❌ No se puede registrar la asistencia: No hay conexión con Google Sheets.")
+        print("❌ No hay conexión con Google Sheets.")
         return
 
     try:
@@ -148,10 +158,10 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
         
         nueva_fila = [nombre_bonito, dia_semana, fecha_actual, hora_actual]
         sheet.append_row(nueva_fila)
-        print(f"🚀 ¡Asistencia guardada en la pestaña '{target_sheet_name}' para: {nombre_bonito}!")
+        print(f"🚀 ¡Asistencia guardada en '{target_sheet_name}' para: {nombre_bonito}!")
         
     except Exception as e:
-        print(f"❌ Error al registrar en Google Sheets ('{target_sheet_name}'): {e}")
+        print(f"❌ Error en Google Sheets ('{target_sheet_name}'): {e}")
 
 
 def extraer_y_normalizar_rostro(ruta_imagen):
@@ -192,7 +202,6 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         rostro_reg = extraer_y_normalizar_rostro(ruta_registro)
 
         if rostro_cap is None or rostro_reg is None:
-            print("⚠️ Uno de los dos rostros no se pudo recortar/detectar.")
             return 0.0
 
         arr1 = rostro_cap.astype(np.float32)
@@ -209,7 +218,7 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         return precision_pct
 
     except Exception as e:
-        print(f"❌ Error en comparación biométrica: {e}")
+        print(f"❌ Error biométrico: {e}")
         return 0.0
 
 # ==========================================
@@ -255,7 +264,6 @@ def register():
     local_path = os.path.join(usuario_dir, "registro.jpg")
     file.save(local_path)
     
-    # Orientar la foto correctamente
     arreglar_orientacion_imagen(local_path)
     
     try:
@@ -265,7 +273,7 @@ def register():
             folder = f"rostros/{nombre}",
             overwrite = True
         )
-        print(f"☁️ Foto de {nombre} respaldada con éxito en Cloudinary: {upload_result.get('secure_url')}")
+        print(f"☁️ Foto de {nombre} respaldada en Cloudinary.")
     except Exception as e:
         print(f"❌ Error al subir a Cloudinary: {e}")
 
@@ -291,24 +299,30 @@ def facecheck():
     mejor_precision = 0.0
     mejor_usuario = "Desconocido"
     
+    # Evaluar contra cada carpeta de alumno (omitiendo no_registrados)
     for usuario in os.listdir(ROSTROS_DIR):
+        if usuario == "no_registrados":
+            continue
+            
         usuario_path = os.path.join(ROSTROS_DIR, usuario)
         if os.path.isdir(usuario_path):
             foto_registro = os.path.join(usuario_path, "registro.jpg")
             if os.path.exists(foto_registro):
                 precision = calcular_similitud_facial_avanzada(temp_path, foto_registro)
-                print(f"DEBUG: Evaluando {usuario}. Resultado facial: {precision}%")
+                print(f"DEBUG: Evaluando {usuario}. Coincidencia: {precision}%")
                 
                 if precision > mejor_precision:
                     mejor_precision = precision
                     mejor_usuario = usuario
 
-    if os.path.exists(temp_path):
-        os.remove(temp_path)
-
-    UMBRAL_SEGURIDAD = 60.0
+    # UMBRAL DE SEGURIDAD ESTRICTO
+    UMBRAL_SEGURIDAD = 80.0
 
     if mejor_precision >= UMBRAL_SEGURIDAD:
+        # Borrar archivo temporal ya que sí fue reconocido
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
         registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
         return jsonify({
             "autorizado": True,
@@ -316,19 +330,56 @@ def facecheck():
             "precision": mejor_precision
         }), 200
     else:
+        # 🚨 NO RECONOCIDO: Guardar la foto del rostro en no_registrados
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nombre_no_reg = f"desconocido_{timestamp}.jpg"
+        path_no_reg = os.path.join(NO_REGISTRADOS_DIR, nombre_no_reg)
+        
+        # Mover o guardar foto en carpeta no_registrados
+        if os.path.exists(temp_path):
+            shutil.move(temp_path, path_no_reg)
+        
+        # Respaldar en Cloudinary dentro de rostros/no_registrados
+        try:
+            cloudinary.uploader.upload(
+                path_no_reg,
+                public_id = f"desconocido_{timestamp}",
+                folder = "rostros/no_registrados",
+                overwrite = False
+            )
+            print(f"⚠️ Foto no reconocida guardada localmente y en Cloudinary: {nombre_no_reg}")
+        except Exception as e:
+            print(f"❌ Error subiendo captura no reconocida a Cloudinary: {e}")
+
         return jsonify({
             "autorizado": False,
+            "mensaje": "No registrado",
             "precision": mejor_precision,
-            "usuario": mejor_usuario.replace("_", " ").title() if mejor_precision > 0 else "Desconocido"
+            "usuario": "No registrado"
         }), 200
 
 @app.route('/ver_rostros', methods=['GET'])
 def ver_rostros():
     sincronizar_desde_cloudinary()
     if os.path.exists(ROSTROS_DIR):
-        archivos = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d))]
+        archivos = [
+            d for d in os.listdir(ROSTROS_DIR) 
+            if os.path.isdir(os.path.join(ROSTROS_DIR, d)) and d != "no_registrados"
+        ]
         return {"total_alumnos": len(archivos), "alumnos_registrados": archivos}, 200
     return {"error": "La carpeta de rostros no existe todavía"}, 404
+
+@app.route('/limpiar_cache', methods=['GET'])
+def limpiar_cache():
+    """ Elimina la carpeta local para forzar a sincronizar de nuevo desde Cloudinary """
+    try:
+        if os.path.exists(ROSTROS_DIR):
+            shutil.rmtree(ROSTROS_DIR)
+            os.makedirs(ROSTROS_DIR)
+            os.makedirs(NO_REGISTRADOS_DIR)
+        return jsonify({"mensaje": "Caché borrada exitosamente"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     sincronizar_desde_cloudinary()
