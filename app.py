@@ -68,7 +68,6 @@ def arreglar_orientacion_imagen(ruta_imagen):
     try:
         image = Image.open(ruta_imagen)
         image = ImageOps.exif_transpose(image)
-        # Reducir resolución máxima para acelerar la comparación
         image.thumbnail((800, 800))
         image.save(ruta_imagen, quality=85)
     except Exception as e:
@@ -139,7 +138,6 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         arr1 = r1.astype(np.float32)
         arr2 = r2.astype(np.float32)
 
-        # Filtro MSE equilibrado para no descartar variaciones normales de luz/ángulo
         mse = np.mean((arr1 - arr2) ** 2)
         if mse > 4500:
             return 15.0
@@ -156,6 +154,33 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
 @app.route("/", methods=["GET", "HEAD"])
 def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Activo 🚀"}), 200
+
+# ==========================================
+# 🚀 NUEVO ENDPOINT PARA DETECCIÓN EN VIVO
+# ==========================================
+@app.route("/api/stream_detect", methods=["POST"])
+def stream_detect():
+    """Recibe fotos en baja calidad, detecta si hay rostro y responde rapidísimo"""
+    if 'photo' not in request.files:
+        return jsonify({"detectado": False}), 400
+    
+    file = request.files['photo']
+    # Leer la imagen directamente desde memoria a OpenCV para mayor velocidad
+    npimg = np.fromfile(file, np.uint8)
+    img = cv2.imdecode(npimg, cv2.IMREAD_GRAYSCALE)
+    
+    if img is None:
+        return jsonify({"detectado": False}), 400
+        
+    # Mejorar contraste y buscar rostros (rápido)
+    img_eq = cv2.equalizeHist(img)
+    faces = face_cascade.detectMultiScale(img_eq, scaleFactor=1.1, minNeighbors=4, minSize=(40, 40))
+    
+    if len(faces) > 0:
+        return jsonify({"detectado": True}), 200
+    else:
+        return jsonify({"detectado": False}), 200
+# ==========================================
 
 @app.route("/login", methods=["POST"])
 @app.route("/api/login", methods=["POST"])
@@ -198,8 +223,6 @@ def facecheck():
         return jsonify({"error": "Falta foto"}), 400
         
     target_sheet = request.form.get("sheet_name", "Pruebas")
-    
-    # Sincroniza únicamente si no hay carpetas cargadas en local
     sincronizar_desde_cloudinary(forzar=False)
         
     file = request.files['photo']
@@ -221,7 +244,6 @@ def facecheck():
                     mejor_precision = precision
                     mejor_usuario = usuario
 
-    # Umbral de seguridad ajustado a 72%
     UMBRAL_SEGURIDAD = 72.0
 
     if mejor_precision >= UMBRAL_SEGURIDAD:
