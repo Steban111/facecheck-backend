@@ -19,11 +19,10 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 ROSTROS_DIR = "rostros"
-NO_REGISTRADOS_DIR = os.path.join(ROSTROS_DIR, "no_registrados")
 
-for d in [ROSTROS_DIR, NO_REGISTRADOS_DIR]:
-    if not os.path.exists(d):
-        os.makedirs(d)
+# Ya no creamos la carpeta NO_REGISTRADOS_DIR porque eliminaremos las fotos al instante.
+if not os.path.exists(ROSTROS_DIR):
+    os.makedirs(ROSTROS_DIR)
 
 xml_filename = "haarcascade_frontalface_default.xml"
 if not os.path.exists(xml_filename):
@@ -75,7 +74,7 @@ def arreglar_orientacion_imagen(ruta_imagen):
 
 def sincronizar_desde_cloudinary(forzar=False):
     try:
-        carpetas = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d)) and d != "no_registrados"]
+        carpetas = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d))]
         if len(carpetas) > 0 and not forzar:
             return
 
@@ -84,6 +83,7 @@ def sincronizar_desde_cloudinary(forzar=False):
             public_id = resource["public_id"]
             url = resource["secure_url"]
             partes = public_id.split('/')
+            
             if len(partes) >= 3 and partes[1] != "no_registrados":
                 nombre_usuario = partes[1]
                 usuario_dir = os.path.join(ROSTROS_DIR, nombre_usuario)
@@ -165,14 +165,12 @@ def stream_detect():
         return jsonify({"detectado": False}), 400
     
     file = request.files['photo']
-    # Leer la imagen directamente desde memoria a OpenCV para mayor velocidad
     npimg = np.fromfile(file, np.uint8)
     img = cv2.imdecode(npimg, cv2.IMREAD_GRAYSCALE)
     
     if img is None:
         return jsonify({"detectado": False}), 400
         
-    # Mejorar contraste y buscar rostros (rápido)
     img_eq = cv2.equalizeHist(img)
     faces = face_cascade.detectMultiScale(img_eq, scaleFactor=1.1, minNeighbors=4, minSize=(40, 40))
     
@@ -192,6 +190,9 @@ def login():
         return jsonify({"mensaje": "Exito", "sheet_assigned": USUARIOS_CONFIG[user]["sheet_name"]}), 200
     return jsonify({"error": "Credenciales incorrectas"}), 401
 
+# ==========================================
+# 📷 REGISTRO: AQUÍ SÍ SE GUARDA EN CLOUDINARY
+# ==========================================
 @app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
 @app.route("/api/register-face", methods=["POST"])
@@ -208,6 +209,7 @@ def register():
     file.save(local_path)
     arreglar_orientacion_imagen(local_path)
     
+    # ÚNICO LUGAR donde subimos foto a Cloudinary
     try:
         cloudinary.uploader.upload(local_path, public_id="registro", folder=f"rostros/{nombre}", overwrite=True)
     except Exception as e:
@@ -215,6 +217,9 @@ def register():
 
     return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
 
+# ==========================================
+# ✅ ASISTENCIA: NO SE GUARDA NADA EN CLOUDINARY
+# ==========================================
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
 @app.route("/api/check-attendance", methods=["POST"])
@@ -227,6 +232,8 @@ def facecheck():
         
     file = request.files['photo']
     temp_path = os.path.join(ROSTROS_DIR, "temp_upload.jpg")
+    
+    # 1. Guardamos la foto temporalmente para que OpenCV pueda leerla
     file.save(temp_path)
     arreglar_orientacion_imagen(temp_path)
     
@@ -234,7 +241,6 @@ def facecheck():
     mejor_usuario = "Desconocido"
     
     for usuario in os.listdir(ROSTROS_DIR):
-        if usuario == "no_registrados": continue
         u_path = os.path.join(ROSTROS_DIR, usuario)
         if os.path.isdir(u_path):
             foto_reg = os.path.join(u_path, "registro.jpg")
@@ -246,8 +252,11 @@ def facecheck():
 
     UMBRAL_SEGURIDAD = 72.0
 
+    # 2. Pase lo que pase (sea válido o inválido), BORRAMOS la foto temporal de la asistencia
+    if os.path.exists(temp_path):
+        os.remove(temp_path)
+
     if mejor_precision >= UMBRAL_SEGURIDAD:
-        if os.path.exists(temp_path): os.remove(temp_path)
         registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
         return jsonify({
             "autorizado": True,
@@ -255,15 +264,7 @@ def facecheck():
             "precision": mejor_precision
         }), 200
     else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path_no_reg = os.path.join(NO_REGISTRADOS_DIR, f"desconocido_{timestamp}.jpg")
-        if os.path.exists(temp_path): shutil.move(temp_path, path_no_reg)
-        
-        try:
-            cloudinary.uploader.upload(path_no_reg, public_id=f"desconocido_{timestamp}", folder="rostros/no_registrados")
-        except Exception as e:
-            print(f"Error subiendo no registrado: {e}")
-
+        # Ya no hay lógica de mover a NO_REGISTRADOS_DIR ni subir a Cloudinary
         return jsonify({
             "autorizado": False,
             "mensaje": "No registrado",
@@ -277,7 +278,6 @@ def limpiar_cache():
         if os.path.exists(ROSTROS_DIR):
             shutil.rmtree(ROSTROS_DIR)
             os.makedirs(ROSTROS_DIR)
-            os.makedirs(NO_REGISTRADOS_DIR)
         sincronizar_desde_cloudinary(forzar=True)
         return jsonify({"mensaje": "Caché borrada y resincronizada exitosamente"}), 200
     except Exception as e:
