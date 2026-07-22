@@ -9,6 +9,7 @@ from PIL import Image, ImageOps
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+from deepface import DeepFace
 
 # Cloudinary
 import cloudinary
@@ -23,6 +24,7 @@ ROSTROS_DIR = "rostros"
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
+# Detector de cascada ultra ligero solo para la detección rápida en vivo
 xml_filename = "haarcascade_frontalface_default.xml"
 if not os.path.exists(xml_filename):
     print("📥 Descargando Haar Cascade...")
@@ -66,8 +68,8 @@ def arreglar_orientacion_imagen(ruta_imagen):
     try:
         image = Image.open(ruta_imagen)
         image = ImageOps.exif_transpose(image)
-        image.thumbnail((800, 800))
-        image.save(ruta_imagen, quality=85)
+        image.thumbnail((600, 600))  # Tamaño optimizado para procesamiento ultra rápido
+        image.save(ruta_imagen, quality=80)
     except Exception as e:
         print(f"⚠️ Error orientación/resize: {e}")
 
@@ -113,50 +115,38 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
     except Exception as e:
         print(f"❌ Error Sheets: {e}")
 
-def extraer_y_normalizar_rostro(ruta_imagen):
+def comparar_biometria_facial(ruta_captura, ruta_registro):
+    """
+    Usa DeepFace con Facenet / Cosine Distance.
+    Compara vectores biométricos geométricos en lugar de píxeles o imágenes simples.
+    """
     try:
-        arreglar_orientacion_imagen(ruta_imagen)
-        img = cv2.imread(ruta_imagen, cv2.IMREAD_GRAYSCALE)
-        if img is None: return None
-        img_eq = cv2.equalizeHist(img)
-        faces = face_cascade.detectMultiScale(img_eq, scaleFactor=1.1, minNeighbors=4, minSize=(40, 40))
-        if len(faces) == 0:
-            faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=4, minSize=(40, 40))
-            if len(faces) == 0: return None
-        x, y, w, h = max(faces, key=lambda r: r[2] * r[3])
-        return cv2.resize(img_eq[y:y+h, x:x+w], (128, 128))
-    except Exception:
-        return None
-
-def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
-    try:
-        r1 = extraer_y_normalizar_rostro(ruta_captura)
-        r2 = extraer_y_normalizar_rostro(ruta_registro)
-        if r1 is None or r2 is None: return 0.0
-
-        arr1 = r1.astype(np.float32)
-        arr2 = r2.astype(np.float32)
-
-        mse = np.mean((arr1 - arr2) ** 2)
-        if mse > 5500:
-            return 15.0
-
-        arr1_norm = (arr1 - np.mean(arr1)) / (np.std(arr1) + 1e-6)
-        arr2_norm = (arr2 - np.mean(arr2)) / (np.std(arr2) + 1e-6)
-        distancia = np.linalg.norm(arr1_norm - arr2_norm) / arr1.size
-
-        # Curva de similitud ajustada para tolerar mejor pequeñas variaciones de ángulo/luz
-        similitud = 1.0 / (1.0 + np.exp((distancia - 0.035) * 60.0))
-        return round(float(similitud) * 100.0, 2)
-    except Exception:
-        return 0.0
+        res = DeepFace.verify(
+            img1_path=ruta_captura,
+            img2_path=ruta_registro,
+            model_name="Facenet",
+            detector_backend="opencv",
+            distance_metric="cosine",
+            enforce_detection=False
+        )
+        
+        distancia = res.get("distance", 1.0)
+        
+        # Convertimos la distancia coseno en un porcentaje de precisión legible
+        precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
+        es_misma_persona = res.get("verified", False) or precision >= 65.0
+        
+        return es_misma_persona, precision
+    except Exception as e:
+        print(f"⚠️ Error biometría: {e}")
+        return False, 0.0
 
 @app.route("/", methods=["GET", "HEAD"])
 def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Activo 🚀"}), 200
 
 # ==========================================
-# 🚀 ENDPOINT PARA DETECCIÓN EN VIVO
+# 🚀 DETECCIÓN EN VIVO ULTRA RÁPIDA (GRIS ➔ MORADO)
 # ==========================================
 @app.route("/api/stream_detect", methods=["POST"])
 def stream_detect():
@@ -170,13 +160,10 @@ def stream_detect():
     if img is None:
         return jsonify({"detectado": False}), 400
         
-    img_eq = cv2.equalizeHist(img)
-    faces = face_cascade.detectMultiScale(img_eq, scaleFactor=1.1, minNeighbors=4, minSize=(40, 40))
+    # Análisis instantáneo en memoria para no trabar el stream de video
+    faces = face_cascade.detectMultiScale(img, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
     
-    if len(faces) > 0:
-        return jsonify({"detectado": True}), 200
-    else:
-        return jsonify({"detectado": False}), 200
+    return jsonify({"detectado": len(faces) > 0}), 200
 
 @app.route("/login", methods=["POST"])
 @app.route("/api/login", methods=["POST"])
@@ -215,7 +202,7 @@ def register():
     return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
 
 # ==========================================
-# ✅ ASISTENCIA
+# ✅ ASISTENCIA (BIOMETRÍA POR VECTORES)
 # ==========================================
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
@@ -235,24 +222,23 @@ def facecheck():
     
     mejor_precision = 0.0
     mejor_usuario = "Desconocido"
+    autorizado = False
     
     for usuario in os.listdir(ROSTROS_DIR):
         u_path = os.path.join(ROSTROS_DIR, usuario)
         if os.path.isdir(u_path):
             foto_reg = os.path.join(u_path, "registro.jpg")
             if os.path.exists(foto_reg):
-                precision = calcular_similitud_facial_avanzada(temp_path, foto_reg)
+                es_mismo, precision = comparar_biometria_facial(temp_path, foto_reg)
                 if precision > mejor_precision:
                     mejor_precision = precision
                     mejor_usuario = usuario
-
-    # UMBRAL AJUSTADO: Más permisivo para evitar rechazos erróneos
-    UMBRAL_SEGURIDAD = 58.0
+                    autorizado = es_mismo
 
     if os.path.exists(temp_path):
         os.remove(temp_path)
 
-    if mejor_precision >= UMBRAL_SEGURIDAD:
+    if autorizado:
         registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
         return jsonify({
             "autorizado": True,
