@@ -20,7 +20,6 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 ROSTROS_DIR = "rostros"
 
-# Ya no creamos la carpeta NO_REGISTRADOS_DIR porque eliminaremos las fotos al instante.
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
@@ -139,14 +138,15 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         arr2 = r2.astype(np.float32)
 
         mse = np.mean((arr1 - arr2) ** 2)
-        if mse > 4500:
+        if mse > 5500:
             return 15.0
 
         arr1_norm = (arr1 - np.mean(arr1)) / (np.std(arr1) + 1e-6)
         arr2_norm = (arr2 - np.mean(arr2)) / (np.std(arr2) + 1e-6)
         distancia = np.linalg.norm(arr1_norm - arr2_norm) / arr1.size
 
-        similitud = 1.0 / (1.0 + np.exp((distancia - 0.025) * 80.0))
+        # Curva de similitud ajustada para tolerar mejor pequeñas variaciones de ángulo/luz
+        similitud = 1.0 / (1.0 + np.exp((distancia - 0.035) * 60.0))
         return round(float(similitud) * 100.0, 2)
     except Exception:
         return 0.0
@@ -156,11 +156,10 @@ def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Activo 🚀"}), 200
 
 # ==========================================
-# 🚀 NUEVO ENDPOINT PARA DETECCIÓN EN VIVO
+# 🚀 ENDPOINT PARA DETECCIÓN EN VIVO
 # ==========================================
 @app.route("/api/stream_detect", methods=["POST"])
 def stream_detect():
-    """Recibe fotos en baja calidad, detecta si hay rostro y responde rapidísimo"""
     if 'photo' not in request.files:
         return jsonify({"detectado": False}), 400
     
@@ -178,7 +177,6 @@ def stream_detect():
         return jsonify({"detectado": True}), 200
     else:
         return jsonify({"detectado": False}), 200
-# ==========================================
 
 @app.route("/login", methods=["POST"])
 @app.route("/api/login", methods=["POST"])
@@ -191,7 +189,7 @@ def login():
     return jsonify({"error": "Credenciales incorrectas"}), 401
 
 # ==========================================
-# 📷 REGISTRO: AQUÍ SÍ SE GUARDA EN CLOUDINARY
+# 📷 REGISTRO
 # ==========================================
 @app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
@@ -209,7 +207,6 @@ def register():
     file.save(local_path)
     arreglar_orientacion_imagen(local_path)
     
-    # ÚNICO LUGAR donde subimos foto a Cloudinary
     try:
         cloudinary.uploader.upload(local_path, public_id="registro", folder=f"rostros/{nombre}", overwrite=True)
     except Exception as e:
@@ -218,7 +215,7 @@ def register():
     return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
 
 # ==========================================
-# ✅ ASISTENCIA: NO SE GUARDA NADA EN CLOUDINARY
+# ✅ ASISTENCIA
 # ==========================================
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
@@ -233,7 +230,6 @@ def facecheck():
     file = request.files['photo']
     temp_path = os.path.join(ROSTROS_DIR, "temp_upload.jpg")
     
-    # 1. Guardamos la foto temporalmente para que OpenCV pueda leerla
     file.save(temp_path)
     arreglar_orientacion_imagen(temp_path)
     
@@ -250,9 +246,9 @@ def facecheck():
                     mejor_precision = precision
                     mejor_usuario = usuario
 
-    UMBRAL_SEGURIDAD = 72.0
+    # UMBRAL AJUSTADO: Más permisivo para evitar rechazos erróneos
+    UMBRAL_SEGURIDAD = 58.0
 
-    # 2. Pase lo que pase (sea válido o inválido), BORRAMOS la foto temporal de la asistencia
     if os.path.exists(temp_path):
         os.remove(temp_path)
 
@@ -264,7 +260,6 @@ def facecheck():
             "precision": mejor_precision
         }), 200
     else:
-        # Ya no hay lógica de mover a NO_REGISTRADOS_DIR ni subir a Cloudinary
         return jsonify({
             "autorizado": False,
             "mensaje": "No registrado",
