@@ -2,13 +2,11 @@ Flask
 flask-cors
 gunicorn
 cloudinary
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
 gspread
 Pillow
 numpy<2.0.0
 oauth2client
 requests
 opencv-python-headless==4.8.1.78
+deepface
+tf-keras
