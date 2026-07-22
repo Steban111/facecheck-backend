@@ -68,14 +68,16 @@ def arreglar_orientacion_imagen(ruta_imagen):
     try:
         image = Image.open(ruta_imagen)
         image = ImageOps.exif_transpose(image)
-        image.save(ruta_imagen)
+        # Reducir resolución máxima para hacer la comparación veloz
+        image.thumbnail((800, 800))
+        image.save(ruta_imagen, quality=85)
     except Exception as e:
-        print(f"⚠️ Error orientación: {e}")
+        print(f"⚠️ Error orientación/resize: {e}")
 
-def sincronizar_desde_cloudinary():
+def sincronizar_desde_cloudinary(forzar=False):
     try:
         carpetas = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d)) and d != "no_registrados"]
-        if len(carpetas) > 0:
+        if len(carpetas) > 0 and not forzar:
             return
 
         resources = cloudinary.api.resources(prefix="rostros/", type="upload")
@@ -128,7 +130,6 @@ def extraer_y_normalizar_rostro(ruta_imagen):
     except Exception:
         return None
 
-# 📌 DEFINICIÓN DE LA FUNCIÓN QUE FALTABA
 def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
     try:
         r1 = extraer_y_normalizar_rostro(ruta_captura)
@@ -197,7 +198,9 @@ def facecheck():
         return jsonify({"error": "Falta foto"}), 400
         
     target_sheet = request.form.get("sheet_name", "Pruebas")
-    sincronizar_desde_cloudinary()
+    
+    # Sincroniza ÚNICAMENTE si no hay carpetas locales cargadas (mucho más rápido)
+    sincronizar_desde_cloudinary(forzar=False)
         
     file = request.files['photo']
     temp_path = os.path.join(ROSTROS_DIR, "temp_upload.jpg")
@@ -252,10 +255,15 @@ def limpiar_cache():
             shutil.rmtree(ROSTROS_DIR)
             os.makedirs(ROSTROS_DIR)
             os.makedirs(NO_REGISTRADOS_DIR)
-        return jsonify({"mensaje": "Caché borrada exitosamente"}), 200
+        sincronizar_desde_cloudinary(forzar=True)
+        return jsonify({"mensaje": "Caché borrada y resincronizada exitosamente"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+if __name__ == "__main__":
+    sincronizar_desde_cloudinary(forzar=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 if __name__ == "__main__":
     sincronizar_desde_cloudinary()
     port = int(os.environ.get("PORT", 10000))
