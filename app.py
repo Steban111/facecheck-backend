@@ -3,6 +3,8 @@ import shutil
 import requests
 import numpy as np
 import cv2
+import gc  # <-- NUEVO: Recolector de basura para liberar memoria RAM
+import pandas as pd
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageOps
@@ -73,13 +75,22 @@ def arreglar_orientacion_imagen(ruta_imagen):
     except Exception as e:
         print(f"⚠️ Error orientación/resize: {e}")
 
+def borrar_cache_biometrico():
+    """Borra el caché precalculado de DeepFace cuando hay usuarios nuevos"""
+    pkl_path = os.path.join(ROSTROS_DIR, "representations_facenet.pkl")
+    if os.path.exists(pkl_path):
+        os.remove(pkl_path)
+        print("♻️ Caché biométrico actualizado (se generará de nuevo).")
+
 def sincronizar_desde_cloudinary(forzar=False):
     try:
         carpetas = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d))]
         if len(carpetas) > 0 and not forzar:
             return
 
-        resources = cloudinary.api.resources(prefix="rostros/", type="upload")
+        resources = cloudinary.api.resources(prefix="rostros/", type="upload", max_results=500)
+        hubo_cambios = False
+        
         for resource in resources.get("resources", []):
             public_id = resource["public_id"]
             url = resource["secure_url"]
@@ -90,12 +101,20 @@ def sincronizar_desde_cloudinary(forzar=False):
                 usuario_dir = os.path.join(ROSTROS_DIR, nombre_usuario)
                 if not os.path.exists(usuario_dir):
                     os.makedirs(usuario_dir)
-                response = requests.get(url)
-                if response.status_code == 200:
-                    dest_file = os.path.join(usuario_dir, "registro.jpg")
-                    with open(dest_file, "wb") as f:
-                        f.write(response.content)
-                    arreglar_orientacion_imagen(dest_file)
+                    hubo_cambios = True
+                
+                dest_file = os.path.join(usuario_dir, "registro.jpg")
+                if not os.path.exists(dest_file) or forzar:
+                    response = requests.get(url)
+                    if response.status_code == 200:
+                        with open(dest_file, "wb") as f:
+                            f.write(response.content)
+                        arreglar_orientacion_imagen(dest_file)
+                        hubo_cambios = True
+                        
+        if hubo_cambios:
+            borrar_cache_biometrico()
+            
     except Exception as e:
         print(f"❌ Error sync Cloudinary: {e}")
 
@@ -115,35 +134,9 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
     except Exception as e:
         print(f"❌ Error Sheets: {e}")
 
-def comparar_biometria_facial(ruta_captura, ruta_registro):
-    """
-    Usa DeepFace con Facenet / Cosine Distance.
-    Compara vectores biométricos geométricos en lugar de píxeles o imágenes simples.
-    """
-    try:
-        res = DeepFace.verify(
-            img1_path=ruta_captura,
-            img2_path=ruta_registro,
-            model_name="Facenet",
-            detector_backend="opencv",
-            distance_metric="cosine",
-            enforce_detection=False
-        )
-        
-        distancia = res.get("distance", 1.0)
-        
-        # Convertimos la distancia coseno en un porcentaje de precisión legible
-        precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
-        es_misma_persona = res.get("verified", False) or precision >= 65.0
-        
-        return es_misma_persona, precision
-    except Exception as e:
-        print(f"⚠️ Error biometría: {e}")
-        return False, 0.0
-
 @app.route("/", methods=["GET", "HEAD"])
 def status_check():
-    return jsonify({"status": "online", "mensaje": "Servidor Biométrico Activo 🚀"}), 200
+    return jsonify({"status": "online", "mensaje": "Servidor Biométrico Optimizado Activo 🚀"}), 200
 
 # ==========================================
 # 🚀 DETECCIÓN EN VIVO ULTRA RÁPIDA (GRIS ➔ MORADO)
@@ -160,7 +153,6 @@ def stream_detect():
     if img is None:
         return jsonify({"detectado": False}), 400
         
-    # Análisis instantáneo en memoria para no trabar el stream de video
     faces = face_cascade.detectMultiScale(img, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
     
     return jsonify({"detectado": len(faces) > 0}), 200
@@ -194,6 +186,8 @@ def register():
     file.save(local_path)
     arreglar_orientacion_imagen(local_path)
     
+    borrar_cache_biometrico() # Forzar re-cálculo para incluir al nuevo usuario
+    
     try:
         cloudinary.uploader.upload(local_path, public_id="registro", folder=f"rostros/{nombre}", overwrite=True)
     except Exception as e:
@@ -202,7 +196,7 @@ def register():
     return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
 
 # ==========================================
-# ✅ ASISTENCIA (BIOMETRÍA POR VECTORES)
+# ✅ ASISTENCIA (BÚSQUEDA VECTORIAL MASIVA)
 # ==========================================
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
@@ -215,7 +209,7 @@ def facecheck():
     sincronizar_desde_cloudinary(forzar=False)
         
     file = request.files['photo']
-    temp_path = os.path.join(ROSTROS_DIR, "temp_upload.jpg")
+    temp_path = os.path.join(ROSTROS_DIR, f"temp_{datetime.now().timestamp()}.jpg")
     
     file.save(temp_path)
     arreglar_orientacion_imagen(temp_path)
@@ -224,19 +218,40 @@ def facecheck():
     mejor_usuario = "Desconocido"
     autorizado = False
     
-    for usuario in os.listdir(ROSTROS_DIR):
-        u_path = os.path.join(ROSTROS_DIR, usuario)
-        if os.path.isdir(u_path):
-            foto_reg = os.path.join(u_path, "registro.jpg")
-            if os.path.exists(foto_reg):
-                es_mismo, precision = comparar_biometria_facial(temp_path, foto_reg)
-                if precision > mejor_precision:
-                    mejor_precision = precision
-                    mejor_usuario = usuario
-                    autorizado = es_mismo
-
-    if os.path.exists(temp_path):
-        os.remove(temp_path)
+    try:
+        # 🚀 LA GRAN MAGIA AQUÍ: Busca en toda la base de datos al instante sin bucles lentos
+        dfs = DeepFace.find(
+            img_path=temp_path,
+            db_path=ROSTROS_DIR,
+            model_name="Facenet",
+            detector_backend="opencv",
+            distance_metric="cosine",
+            enforce_detection=False,
+            silent=True
+        )
+        
+        if len(dfs) > 0 and not dfs[0].empty:
+            df = dfs[0].sort_values(by="distance")
+            mejor_match = df.iloc[0]
+            distancia = mejor_match["distance"]
+            ruta_match = mejor_match["identity"]
+            
+            # Convertir la distancia coseno a porcentaje
+            precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
+            
+            if precision >= 65.0:
+                mejor_usuario = os.path.basename(os.path.dirname(ruta_match))
+                autorizado = True
+                mejor_precision = precision
+                
+    except Exception as e:
+        print(f"⚠️ Error DeepFace Find: {e}")
+        
+    finally:
+        # 🧹 LIMPIEZA OBLIGATORIA: Borra la foto temporal y libera la memoria RAM forzosamente
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        gc.collect()
 
     if autorizado:
         registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
