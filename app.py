@@ -68,7 +68,7 @@ def arreglar_orientacion_imagen(ruta_imagen):
     try:
         image = Image.open(ruta_imagen)
         image = ImageOps.exif_transpose(image)
-        # Reducir resolución máxima para hacer la comparación veloz
+        # Reducir resolución máxima para acelerar la comparación
         image.thumbnail((800, 800))
         image.save(ruta_imagen, quality=85)
     except Exception as e:
@@ -139,16 +139,16 @@ def calcular_similitud_facial_avanzada(ruta_captura, ruta_registro):
         arr1 = r1.astype(np.float32)
         arr2 = r2.astype(np.float32)
 
-        # Filtro MSE para rechazar caras estructuralmente distintas
+        # Filtro MSE equilibrado para no descartar variaciones normales de luz/ángulo
         mse = np.mean((arr1 - arr2) ** 2)
-        if mse > 2600:
-            return 20.0
+        if mse > 4500:
+            return 15.0
 
         arr1_norm = (arr1 - np.mean(arr1)) / (np.std(arr1) + 1e-6)
         arr2_norm = (arr2 - np.mean(arr2)) / (np.std(arr2) + 1e-6)
         distancia = np.linalg.norm(arr1_norm - arr2_norm) / arr1.size
 
-        similitud = 1.0 / (1.0 + np.exp((distancia - 0.022) * 120.0))
+        similitud = 1.0 / (1.0 + np.exp((distancia - 0.025) * 80.0))
         return round(float(similitud) * 100.0, 2)
     except Exception:
         return 0.0
@@ -199,7 +199,7 @@ def facecheck():
         
     target_sheet = request.form.get("sheet_name", "Pruebas")
     
-    # Sincroniza ÚNICAMENTE si no hay carpetas locales cargadas (mucho más rápido)
+    # Sincroniza únicamente si no hay carpetas cargadas en local
     sincronizar_desde_cloudinary(forzar=False)
         
     file = request.files['photo']
@@ -221,7 +221,8 @@ def facecheck():
                     mejor_precision = precision
                     mejor_usuario = usuario
 
-    UMBRAL_SEGURIDAD = 82.0
+    # Umbral de seguridad ajustado a 72%
+    UMBRAL_SEGURIDAD = 72.0
 
     if mejor_precision >= UMBRAL_SEGURIDAD:
         if os.path.exists(temp_path): os.remove(temp_path)
@@ -262,9 +263,5 @@ def limpiar_cache():
 
 if __name__ == "__main__":
     sincronizar_desde_cloudinary(forzar=True)
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-if __name__ == "__main__":
-    sincronizar_desde_cloudinary()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
