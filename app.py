@@ -286,7 +286,7 @@ def register():
     return res, 200
 
 # ==========================================
-# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA (BLINDADO)
+# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA (ULTRA LIGERO)
 # ==========================================
 @app.route("/facecheck", methods=["POST", "OPTIONS"])
 @app.route("/api/facecheck", methods=["POST", "OPTIONS"])
@@ -297,23 +297,17 @@ def facecheck():
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
-    # Aceptar la foto desde cualquier nombre de parámetro común
     file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
 
     if not file:
-        res = jsonify({"autorizado": False, "mensaje": "Falta foto en la petición"})
+        res = jsonify({"autorizado": False, "mensaje": "Falta foto"})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
     target_sheet = request.form.get("sheet_name") or request.form.get("sheet") or "Pruebas"
-    
-    # Sincronizar rostros guardados si es necesario
-    try:
-        sincronizar_desde_cloudinary(forzar=False)
-    except Exception as e:
-        print(f"⚠️ Aviso sync en facecheck: {e}")
 
-    temp_path = os.path.join(ROSTROS_DIR, f"temp_{datetime.now().timestamp()}.jpg")
+    # Archivo temporal único
+    temp_path = os.path.join(ROSTROS_DIR, f"temp_{int(datetime.now().timestamp())}.jpg")
 
     try:
         procesar_y_guardar_foto_ligera(file, temp_path)
@@ -322,7 +316,7 @@ def facecheck():
         mejor_usuario = "Desconocido"
         autorizado = False
 
-        # Reconocimiento Facial optimizado
+        # Ejecutamos la búsqueda biométrica usando opencv (detector ligero)
         dfs = DeepFace.find(
             img_path=temp_path,
             db_path=ROSTROS_DIR,
@@ -336,12 +330,12 @@ def facecheck():
         if len(dfs) > 0 and not dfs[0].empty:
             df = dfs[0].sort_values(by="distance")
             mejor_match = df.iloc[0]
-            distancia = mejor_match["distance"]
-            ruta_match = mejor_match["identity"]
+            distancia = float(mejor_match["distance"])
+            ruta_match = str(mejor_match["identity"])
 
             precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
 
-            if precision >= 65.0:
+            if precision >= 60.0:  # Umbral flexible
                 mejor_usuario = os.path.basename(os.path.dirname(ruta_match))
                 autorizado = True
                 mejor_precision = precision
@@ -359,17 +353,17 @@ def facecheck():
             res = jsonify({
                 "autorizado": False,
                 "success": False,
-                "mensaje": "Rostro no registrado",
+                "mensaje": "Rostro no reconocido",
                 "precision": mejor_precision,
                 "usuario": "No registrado"
             })
 
     except Exception as e:
-        print(f"❌ Error crítico en facecheck: {e}")
+        print(f"⚠️ Error controlado en facecheck: {e}")
         res = jsonify({
             "autorizado": False,
             "success": False,
-            "mensaje": f"Error procesando rostro: {str(e)}"
+            "mensaje": f"Error: {str(e)}"
         })
 
     finally:
