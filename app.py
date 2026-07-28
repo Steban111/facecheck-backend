@@ -26,7 +26,7 @@ import cloudinary.uploader
 import cloudinary.api
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+CORS(app)  # Configuración limpia de CORS sin conflictos
 
 ROSTROS_DIR = "rostros"
 
@@ -73,7 +73,7 @@ USUARIOS_CONFIG = {
     "prueba": {"sheet_name": "Pruebas", "pin": "1234"}
 }
 
-# 🚀 PRECARGA EL MODELO FACENET AL ARRANCAR GUNICORN (Evita timeouts en la app)
+# 🚀 PRECARGA EL MODELO FACENET AL ARRANCAR GUNICORN
 print("🧠 Precargando modelo biométrico Facenet en RAM...")
 try:
     DeepFace.build_model("Facenet")
@@ -82,10 +82,6 @@ except Exception as e:
     print(f"⚠️ Aviso precarga Facenet: {e}")
 
 def procesar_y_guardar_foto_ligera(file_storage, destino_path):
-    """
-    Recibe la foto del APK y la comprime de inmediato en memoria 
-    a máximo 400px y calidad 65% para NO agotar la RAM de Render.
-    """
     try:
         in_memory_bytes = np.frombuffer(file_storage.read(), np.uint8)
         img = cv2.imdecode(in_memory_bytes, cv2.IMREAD_COLOR)
@@ -93,13 +89,12 @@ def procesar_y_guardar_foto_ligera(file_storage, destino_path):
 
         if img is not None:
             h, w = img.shape[:2]
-            max_size = 400  # Resolución ultra optimizada para Facenet
+            max_size = 400
             if max(h, w) > max_size:
                 scale = max_size / float(max(h, w))
                 new_w, new_h = int(w * scale), int(h * scale)
                 img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-            # Guarda en calidad 65% (pasa de 8MB a ~60KB)
             cv2.imwrite(destino_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
             del img
             gc.collect()
@@ -112,7 +107,6 @@ def procesar_y_guardar_foto_ligera(file_storage, destino_path):
     return False
 
 def borrar_cache_biometrico():
-    """Borra el archivo precalculado de DeepFace cuando se añade o elimina un usuario"""
     pkl_path = os.path.join(ROSTROS_DIR, "representations_facenet.pkl")
     if os.path.exists(pkl_path):
         try:
@@ -177,12 +171,16 @@ def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Cohete Activo 🚀"}), 200
 
 # ==========================================
-# 🚀 DETECCIÓN EN VIVO RÁPIDA (STREAM)
+# 🚀 DETECCIÓN EN VIVO RÁPIDA (STREAM - GRIS A MORADO)
 # ==========================================
-@app.route("/api/stream_detect", methods=["POST"])
+@app.route("/stream_detect", methods=["POST", "OPTIONS"])
+@app.route("/api/stream_detect", methods=["POST", "OPTIONS"])
 def stream_detect():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
     if 'photo' not in request.files:
-        return jsonify({"detectado": False}), 400
+        return jsonify({"detectado": False}), 200
     
     try:
         file = request.files['photo']
@@ -229,10 +227,13 @@ def login():
 # ==========================================
 # 📷 REGISTRO DE ROSTRO
 # ==========================================
-@app.route("/register", methods=["POST"])
-@app.route("/api/register", methods=["POST"])
-@app.route("/api/register-face", methods=["POST"])
+@app.route("/register", methods=["POST", "OPTIONS"])
+@app.route("/api/register", methods=["POST", "OPTIONS"])
+@app.route("/api/register-face", methods=["POST", "OPTIONS"])
 def register():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
     if 'photo' not in request.files or 'name' not in request.form:
         return jsonify({"error": "Faltan datos"}), 400
     file = request.files['photo']
@@ -256,10 +257,13 @@ def register():
 # ==========================================
 # ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA
 # ==========================================
-@app.route("/facecheck", methods=["POST"])
-@app.route("/api/facecheck", methods=["POST"])
-@app.route("/api/check-attendance", methods=["POST"])
+@app.route("/facecheck", methods=["POST", "OPTIONS"])
+@app.route("/api/facecheck", methods=["POST", "OPTIONS"])
+@app.route("/api/check-attendance", methods=["POST", "OPTIONS"])
 def facecheck():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
     if 'photo' not in request.files:
         return jsonify({"error": "Falta foto"}), 400
         
