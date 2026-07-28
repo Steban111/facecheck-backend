@@ -1,6 +1,6 @@
 import os
 
-# 🛑 CONFIGURACIÓN DE MEMORIA Y CPU (DEBE IR ANTES DE IMPORTAR DEEPFACE)
+# 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU (DEBE IR ANTES DE IMPORTAR DEEPFACE)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -38,7 +38,7 @@ xml_filename = "haarcascade_frontalface_default.xml"
 if not os.path.exists(xml_filename):
     print("📥 Descargando Haar Cascade...")
     url_cascade = "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
-    res = requests.get(url_cascade)
+    res = requests.get(url_cascade, timeout=10)
     with open(xml_filename, "wb") as f:
         f.write(res.content)
 
@@ -73,10 +73,18 @@ USUARIOS_CONFIG = {
     "prueba": {"sheet_name": "Pruebas", "pin": "1234"}
 }
 
+# 🚀 PRECARGA EL MODELO FACENET AL ARRANCAR GUNICORN (Evita timeouts en la app)
+print("🧠 Precargando modelo biométrico Facenet en RAM...")
+try:
+    DeepFace.build_model("Facenet")
+    print("✅ Modelo Facenet listo y caliente en memoria.")
+except Exception as e:
+    print(f"⚠️ Aviso precarga Facenet: {e}")
+
 def procesar_y_guardar_foto_ligera(file_storage, destino_path):
     """
-    Recibe la foto gigante enviada por el APK y la comprime de inmediato
-    en la memoria usando OpenCV para NO agotar la RAM de Render.
+    Recibe la foto del APK y la comprime de inmediato en memoria 
+    a máximo 400px y calidad 65% para NO agotar la RAM de Render.
     """
     try:
         in_memory_bytes = np.frombuffer(file_storage.read(), np.uint8)
@@ -85,21 +93,20 @@ def procesar_y_guardar_foto_ligera(file_storage, destino_path):
 
         if img is not None:
             h, w = img.shape[:2]
-            max_size = 500  # Tamaño máximo óptimo para DeepFace
+            max_size = 400  # Resolución ultra optimizada para Facenet
             if max(h, w) > max_size:
                 scale = max_size / float(max(h, w))
                 new_w, new_h = int(w * scale), int(h * scale)
                 img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-            # Guarda en calidad 70% (pasa de 8MB a solo 80KB)
-            cv2.imwrite(destino_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            # Guarda en calidad 65% (pasa de 8MB a ~60KB)
+            cv2.imwrite(destino_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
             del img
             gc.collect()
             return True
     except Exception as e:
         print(f"⚠️ Error procesando imagen en memoria: {e}")
     
-    # Fallback tradicional si falla OpenCV
     file_storage.seek(0)
     file_storage.save(destino_path)
     return False
@@ -108,8 +115,11 @@ def borrar_cache_biometrico():
     """Borra el archivo precalculado de DeepFace cuando se añade o elimina un usuario"""
     pkl_path = os.path.join(ROSTROS_DIR, "representations_facenet.pkl")
     if os.path.exists(pkl_path):
-        os.remove(pkl_path)
-        print("♻️ Caché biométrico eliminado.")
+        try:
+            os.remove(pkl_path)
+            print("♻️ Caché biométrico eliminado.")
+        except Exception as e:
+            print(f"⚠️ Error borrando PKL: {e}")
 
 def sincronizar_desde_cloudinary(forzar=False):
     try:
@@ -134,7 +144,7 @@ def sincronizar_desde_cloudinary(forzar=False):
                 
                 dest_file = os.path.join(usuario_dir, "registro.jpg")
                 if not os.path.exists(dest_file) or forzar:
-                    response = requests.get(url)
+                    response = requests.get(url, timeout=10)
                     if response.status_code == 200:
                         with open(dest_file, "wb") as f:
                             f.write(response.content)
@@ -164,23 +174,29 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 
 @app.route("/", methods=["GET", "HEAD"])
 def status_check():
-    return jsonify({"status": "online", "mensaje": "Servidor Biométrico Ultra Optimizado Activo 🚀"}), 200
+    return jsonify({"status": "online", "mensaje": "Servidor Biométrico Cohete Activo 🚀"}), 200
 
+# ==========================================
+# 🚀 DETECCIÓN EN VIVO RÁPIDA (STREAM)
+# ==========================================
 @app.route("/api/stream_detect", methods=["POST"])
 def stream_detect():
     if 'photo' not in request.files:
         return jsonify({"detectado": False}), 400
     
-    file = request.files['photo']
-    npimg = np.fromfile(file, np.uint8)
-    img = cv2.imdecode(npimg, cv2.IMREAD_GRAYSCALE)
-    
-    if img is None:
-        return jsonify({"detectado": False}), 400
+    try:
+        file = request.files['photo']
+        npimg = np.fromfile(file, np.uint8)
+        img = cv2.imdecode(npimg, cv2.IMREAD_GRAYSCALE)
         
-    faces = face_cascade.detectMultiScale(img, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
-    
-    return jsonify({"detectado": len(faces) > 0}), 200
+        if img is None:
+            return jsonify({"detectado": False}), 400
+            
+        faces = face_cascade.detectMultiScale(img, scaleFactor=1.3, minNeighbors=4, minSize=(30, 30))
+        
+        return jsonify({"detectado": len(faces) > 0}), 200
+    except Exception:
+        return jsonify({"detectado": False}), 200
 
 @app.route("/login", methods=["POST"])
 @app.route("/api/login", methods=["POST"])
@@ -192,6 +208,9 @@ def login():
         return jsonify({"mensaje": "Exito", "sheet_assigned": USUARIOS_CONFIG[user]["sheet_name"]}), 200
     return jsonify({"error": "Credenciales incorrectas"}), 401
 
+# ==========================================
+# 📷 REGISTRO DE ROSTRO
+# ==========================================
 @app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
 @app.route("/api/register-face", methods=["POST"])
@@ -216,6 +235,9 @@ def register():
 
     return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
 
+# ==========================================
+# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA
+# ==========================================
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
 @app.route("/api/check-attendance", methods=["POST"])
@@ -265,7 +287,10 @@ def facecheck():
         
     finally:
         if os.path.exists(temp_path):
-            os.remove(temp_path)
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
         gc.collect()
 
     if autorizado:
@@ -294,7 +319,9 @@ def limpiar_cache():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Sincronización inicial rápida
+sincronizar_desde_cloudinary(forzar=False)
+
 if __name__ == "__main__":
-    sincronizar_desde_cloudinary(forzar=True)
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
