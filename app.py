@@ -1,6 +1,6 @@
 import os
 
-# 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU (DEBE IR ANTES DE IMPORTAR DEEPFACE)
+# 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -26,7 +26,7 @@ import cloudinary.uploader
 import cloudinary.api
 
 app = Flask(__name__)
-CORS(app)  # Configuración limpia de CORS sin conflictos
+CORS(app)  # Configuración limpia de CORS
 
 ROSTROS_DIR = "rostros"
 
@@ -73,7 +73,7 @@ USUARIOS_CONFIG = {
     "prueba": {"sheet_name": "Pruebas", "pin": "1234"}
 }
 
-# 🚀 PRECARGA EL MODELO FACENET AL ARRANCAR GUNICORN
+# 🚀 PRECARGA EL MODELO FACENET
 print("🧠 Precargando modelo biométrico Facenet en RAM...")
 try:
     DeepFace.build_model("Facenet")
@@ -171,28 +171,46 @@ def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Cohete Activo 🚀"}), 200
 
 # ==========================================
-# 🚀 DETECCIÓN EN VIVO RÁPIDA (STREAM - GRIS A MORADO)
+# 🚀 DETECCIÓN EN VIVO BLINDADA (STREAM - GRIS A MORADO)
 # ==========================================
 @app.route("/stream_detect", methods=["POST", "OPTIONS"])
 @app.route("/api/stream_detect", methods=["POST", "OPTIONS"])
 def stream_detect():
     if request.method == "OPTIONS":
+        print("🔍 Petición OPTIONS recibida en stream_detect")
         return jsonify({"status": "ok"}), 200
 
-    if 'photo' not in request.files:
+    # Busca la foto en cualquier nombre de campo común
+    file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
+    
+    if not file:
+        print("⚠️ Stream: Llegó la petición POST pero no trae la imagen.")
         return jsonify({"detectado": False}), 200
     
     try:
-        file = request.files['photo']
         in_memory_bytes = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(in_memory_bytes, cv2.IMREAD_GRAYSCALE)
         
         if img is None:
+            print("⚠️ Stream: No se pudo leer la imagen enviada.")
             return jsonify({"detectado": False}), 200
             
+        # 1. Prueba detección normal
         faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
         
-        return jsonify({"detectado": len(faces) > 0}), 200
+        # 2. Si no halla nada, rota 90 grados (Android suele mandarlas de lado)
+        if len(faces) == 0:
+            img_rot = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+            faces = face_cascade.detectMultiScale(img_rot, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
+            
+        if len(faces) == 0:
+            img_rot_ccw = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            faces = face_cascade.detectMultiScale(img_rot_ccw, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
+
+        detectado = len(faces) > 0
+        print(f"📸 Stream -> Caras: {len(faces)} | ¿Detectado?: {detectado}")
+        
+        return jsonify({"detectado": detectado}), 200
     except Exception as e:
         print(f"⚠️ Error stream_detect: {e}")
         return jsonify({"detectado": False}), 200
