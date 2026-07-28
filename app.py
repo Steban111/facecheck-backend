@@ -1,8 +1,11 @@
 import os
 
-# 🛑 CONFIGURACIÓN DE MEMORIA TENSORFLOW (DEBE IR ANTES DE IMPORTAR DEEPFACE)
+# 🛑 CONFIGURACIÓN DE MEMORIA Y CPU (DEBE IR OBLIGATORIAMENTE ANTES DE DEEPFACE)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
+os.environ["TF_NUM_INTEROP_THREADS"] = "1"
 
 import shutil
 import requests
@@ -30,7 +33,7 @@ ROSTROS_DIR = "rostros"
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
-# Detector de cascada ultra ligero solo para la detección rápida en vivo
+# Detector Haar Cascade ultra ligero
 xml_filename = "haarcascade_frontalface_default.xml"
 if not os.path.exists(xml_filename):
     print("📥 Descargando Haar Cascade...")
@@ -71,21 +74,21 @@ USUARIOS_CONFIG = {
 }
 
 def arreglar_orientacion_imagen(ruta_imagen):
-    """Comprime la imagen a 300x300 px para ahorrar espacio en disco duro"""
+    """Comprime la imagen a 300x300 px y calidad 60% para minimizar consumo de disco y RAM"""
     try:
         image = Image.open(ruta_imagen)
         image = ImageOps.exif_transpose(image)
-        image.thumbnail((300, 300))  # Compresión máxima optimizada para DeepFace
+        image.thumbnail((300, 300))
         image.save(ruta_imagen, quality=60, optimize=True)
     except Exception as e:
         print(f"⚠️ Error orientación/resize: {e}")
 
 def borrar_cache_biometrico():
-    """Borra el caché precalculado de DeepFace cuando hay usuarios nuevos"""
+    """Borra el archivo .pkl precalculado de DeepFace cuando se añade o elimina un usuario"""
     pkl_path = os.path.join(ROSTROS_DIR, "representations_facenet.pkl")
     if os.path.exists(pkl_path):
         os.remove(pkl_path)
-        print("♻️ Caché biométrico actualizado.")
+        print("♻️ Caché biométrico eliminado y actualizado.")
 
 def sincronizar_desde_cloudinary(forzar=False):
     try:
@@ -143,6 +146,9 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Optimizado Activo 🚀"}), 200
 
+# ==========================================
+# 🚀 DETECCIÓN EN VIVO RÁPIDA (STREAM)
+# ==========================================
 @app.route("/api/stream_detect", methods=["POST"])
 def stream_detect():
     if 'photo' not in request.files:
@@ -169,6 +175,9 @@ def login():
         return jsonify({"mensaje": "Exito", "sheet_assigned": USUARIOS_CONFIG[user]["sheet_name"]}), 200
     return jsonify({"error": "Credenciales incorrectas"}), 401
 
+# ==========================================
+# 📷 REGISTRO DE ROSTRO
+# ==========================================
 @app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
 @app.route("/api/register-face", methods=["POST"])
@@ -194,6 +203,9 @@ def register():
 
     return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
 
+# ==========================================
+# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA
+# ==========================================
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
 @app.route("/api/check-attendance", methods=["POST"])
@@ -242,6 +254,7 @@ def facecheck():
         print(f"⚠️ Error DeepFace Find: {e}")
         
     finally:
+        # 🧹 LIMPIEZA RIGUROSA EN CADA PETICIÓN
         if os.path.exists(temp_path):
             os.remove(temp_path)
         gc.collect()
@@ -271,11 +284,6 @@ def limpiar_cache():
         return jsonify({"mensaje": "Caché borrada y resincronizada exitosamente"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    sincronizar_desde_cloudinary(forzar=True)
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     sincronizar_desde_cloudinary(forzar=True)
