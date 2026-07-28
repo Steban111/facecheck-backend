@@ -286,7 +286,7 @@ def register():
     return res, 200
 
 # ==========================================
-# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA
+# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA (BLINDADO)
 # ==========================================
 @app.route("/facecheck", methods=["POST", "OPTIONS"])
 @app.route("/api/facecheck", methods=["POST", "OPTIONS"])
@@ -297,22 +297,32 @@ def facecheck():
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
-    if 'photo' not in request.files:
-        return jsonify({"error": "Falta foto"}), 400
-        
-    target_sheet = request.form.get("sheet_name", "Pruebas")
-    sincronizar_desde_cloudinary(forzar=False)
-        
-    file = request.files['photo']
-    temp_path = os.path.join(ROSTROS_DIR, f"temp_{datetime.now().timestamp()}.jpg")
+    # Aceptar la foto desde cualquier nombre de parámetro común
+    file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
+
+    if not file:
+        res = jsonify({"autorizado": False, "mensaje": "Falta foto en la petición"})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
+
+    target_sheet = request.form.get("sheet_name") or request.form.get("sheet") or "Pruebas"
     
-    procesar_y_guardar_foto_ligera(file, temp_path)
-    
-    mejor_precision = 0.0
-    mejor_usuario = "Desconocido"
-    autorizado = False
-    
+    # Sincronizar rostros guardados si es necesario
     try:
+        sincronizar_desde_cloudinary(forzar=False)
+    except Exception as e:
+        print(f"⚠️ Aviso sync en facecheck: {e}")
+
+    temp_path = os.path.join(ROSTROS_DIR, f"temp_{datetime.now().timestamp()}.jpg")
+
+    try:
+        procesar_y_guardar_foto_ligera(file, temp_path)
+
+        mejor_precision = 0.0
+        mejor_usuario = "Desconocido"
+        autorizado = False
+
+        # Reconocimiento Facial optimizado
         dfs = DeepFace.find(
             img_path=temp_path,
             db_path=ROSTROS_DIR,
@@ -322,23 +332,46 @@ def facecheck():
             enforce_detection=False,
             silent=True
         )
-        
+
         if len(dfs) > 0 and not dfs[0].empty:
             df = dfs[0].sort_values(by="distance")
             mejor_match = df.iloc[0]
             distancia = mejor_match["distance"]
             ruta_match = mejor_match["identity"]
-            
+
             precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
-            
+
             if precision >= 65.0:
                 mejor_usuario = os.path.basename(os.path.dirname(ruta_match))
                 autorizado = True
                 mejor_precision = precision
-                
+
+        if autorizado:
+            registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
+            res = jsonify({
+                "autorizado": True,
+                "success": True,
+                "usuario": mejor_usuario.replace("_", " ").title(),
+                "precision": mejor_precision,
+                "mensaje": f"Asistencia registrada: {mejor_usuario}"
+            })
+        else:
+            res = jsonify({
+                "autorizado": False,
+                "success": False,
+                "mensaje": "Rostro no registrado",
+                "precision": mejor_precision,
+                "usuario": "No registrado"
+            })
+
     except Exception as e:
-        print(f"⚠️ Error DeepFace Find: {e}")
-        
+        print(f"❌ Error crítico en facecheck: {e}")
+        res = jsonify({
+            "autorizado": False,
+            "success": False,
+            "mensaje": f"Error procesando rostro: {str(e)}"
+        })
+
     finally:
         if os.path.exists(temp_path):
             try:
@@ -347,21 +380,6 @@ def facecheck():
                 pass
         gc.collect()
 
-    if autorizado:
-        registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
-        res = jsonify({
-            "autorizado": True,
-            "usuario": mejor_usuario.replace("_", " ").title(),
-            "precision": mejor_precision
-        })
-    else:
-        res = jsonify({
-            "autorizado": False,
-            "mensaje": "No registrado",
-            "precision": mejor_precision,
-            "usuario": "No registrado"
-        })
-        
     res.headers.add("Access-Control-Allow-Origin", "*")
     return res, 200
 
