@@ -1,6 +1,6 @@
-import os
+iimport os
 
-# 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU PARA RENDER FREE
+# 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -14,7 +14,6 @@ import cv2
 import gc
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from PIL import Image, ImageOps
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
@@ -26,7 +25,6 @@ import cloudinary.uploader
 import cloudinary.api
 
 app = Flask(__name__)
-# Permitimos CORS globalmente para evitar bloqueos del celular
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 ROSTROS_DIR = "rostros"
@@ -74,14 +72,6 @@ USUARIOS_CONFIG = {
     "prueba": {"sheet_name": "Pruebas", "pin": "1234"}
 }
 
-# 🚀 PRECARGA EL MODELO FACENET
-print("🧠 Precargando modelo biométrico Facenet en RAM...")
-try:
-    DeepFace.build_model("Facenet")
-    print("✅ Modelo Facenet listo y caliente en memoria.")
-except Exception as e:
-    print(f"⚠️ Aviso precarga Facenet: {e}")
-
 def procesar_y_guardar_foto_ligera(file_storage, destino_path):
     try:
         in_memory_bytes = np.frombuffer(file_storage.read(), np.uint8)
@@ -101,7 +91,7 @@ def procesar_y_guardar_foto_ligera(file_storage, destino_path):
             gc.collect()
             return True
     except Exception as e:
-        print(f"⚠️ Error procesando imagen en memoria: {e}")
+        print(f"⚠️ Error procesando imagen: {e}")
     
     file_storage.seek(0)
     file_storage.save(destino_path)
@@ -169,25 +159,21 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 
 @app.route("/", methods=["GET", "HEAD"])
 def status_check():
-    return jsonify({"status": "online", "mensaje": "Servidor Biométrico Cohete Activo 🚀"}), 200
+    return jsonify({"status": "online", "mensaje": "Servidor Activo 🚀"}), 200
 
 # ==========================================
-# 🚀 DETECCIÓN EN VIVO BLINDADA (STREAM - GRIS A MORADO)
+# 🚀 DETECCIÓN EN VIVO (STREAM - GRIS A MORADO)
 # ==========================================
 @app.route("/stream_detect", methods=["POST", "OPTIONS"])
 @app.route("/api/stream_detect", methods=["POST", "OPTIONS"])
 def stream_detect():
-    # 1. RESTAURAMOS LOS PERMISOS MANUALES QUE TU APP EXIGE (CORS PRE-FLIGHT)
     if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "*")
-        response.headers.add("Access-Control-Allow-Methods", "*")
-        return response, 200
+        res = jsonify({"status": "ok"})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
 
     file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
     
-    # 2. DEVOLVEMOS CÓDIGO 200 SIEMPRE PARA QUE LA APP NO SE CONGELE
     if not file:
         res = jsonify({"detectado": False})
         res.headers.add("Access-Control-Allow-Origin", "*")
@@ -203,7 +189,6 @@ def stream_detect():
             res.headers.add("Access-Control-Allow-Origin", "*")
             return res, 200
 
-        # Mantenemos la eficiencia del scaleFactor=1.2 para que Render no sufra
         faces = face_cascade.detectMultiScale(img, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
 
         if len(faces) == 0:
@@ -221,8 +206,7 @@ def stream_detect():
         gc.collect()
 
         print(f"📸 Stream -> Caras: {len(faces)} | Color: {'Morado' if hay_rostro else 'Gris'}")
-        
-        # 3. ENVIAMOS RESPUESTA CON PERMISOS PARA QUE CAMBIE A MORADO
+
         res = jsonify({"detectado": hay_rostro})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
@@ -240,7 +224,9 @@ def stream_detect():
 @app.route("/api/login", methods=["POST", "OPTIONS"])
 def login():
     if request.method == "OPTIONS":
-        return jsonify({"status": "ok"}), 200
+        res = jsonify({"status": "ok"})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
 
     data = request.get_json(silent=True) or request.form or {}
 
@@ -249,16 +235,20 @@ def login():
 
     if user in USUARIOS_CONFIG and str(USUARIOS_CONFIG[user]["pin"]) == pin:
         target_sheet = USUARIOS_CONFIG[user]["sheet_name"]
-        return jsonify({
+        res = jsonify({
             "mensaje": "Exito",
             "success": True,
             "status": "ok",
             "sheet_assigned": target_sheet,
             "sheet_name": target_sheet,
             "usuario": user
-        }), 200
+        })
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
 
-    return jsonify({"error": "Credenciales incorrectas", "success": False}), 401
+    res = jsonify({"error": "Credenciales incorrectas", "success": False})
+    res.headers.add("Access-Control-Allow-Origin", "*")
+    return res, 401
 
 # ==========================================
 # 📷 REGISTRO DE ROSTRO
@@ -268,7 +258,9 @@ def login():
 @app.route("/api/register-face", methods=["POST", "OPTIONS"])
 def register():
     if request.method == "OPTIONS":
-        return jsonify({"status": "ok"}), 200
+        res = jsonify({"status": "ok"})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
 
     if 'photo' not in request.files or 'name' not in request.form:
         return jsonify({"error": "Faltan datos"}), 400
@@ -289,7 +281,9 @@ def register():
     except Exception as e:
         print(f"Cloudinary error: {e}")
 
-    return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
+    res = jsonify({"mensaje": f"Usuario {nombre} registrado"})
+    res.headers.add("Access-Control-Allow-Origin", "*")
+    return res, 200
 
 # ==========================================
 # ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA
@@ -299,7 +293,9 @@ def register():
 @app.route("/api/check-attendance", methods=["POST", "OPTIONS"])
 def facecheck():
     if request.method == "OPTIONS":
-        return jsonify({"status": "ok"}), 200
+        res = jsonify({"status": "ok"})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
 
     if 'photo' not in request.files:
         return jsonify({"error": "Falta foto"}), 400
@@ -353,18 +349,21 @@ def facecheck():
 
     if autorizado:
         registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
-        return jsonify({
+        res = jsonify({
             "autorizado": True,
             "usuario": mejor_usuario.replace("_", " ").title(),
             "precision": mejor_precision
-        }), 200
+        })
     else:
-        return jsonify({
+        res = jsonify({
             "autorizado": False,
             "mensaje": "No registrado",
             "precision": mejor_precision,
             "usuario": "No registrado"
-        }), 200
+        })
+        
+    res.headers.add("Access-Control-Allow-Origin", "*")
+    return res, 200
 
 @app.route('/limpiar_cache', methods=['GET'])
 def limpiar_cache():
@@ -373,11 +372,10 @@ def limpiar_cache():
             shutil.rmtree(ROSTROS_DIR)
             os.makedirs(ROSTROS_DIR)
         sincronizar_desde_cloudinary(forzar=True)
-        return jsonify({"mensaje": "Caché borrada y resincronizada exitosamente"}), 200
+        return jsonify({"mensaje": "Caché borrada exitosamente"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Sincronización inicial rápida
 sincronizar_desde_cloudinary(forzar=False)
 
 if __name__ == "__main__":
