@@ -1,6 +1,6 @@
 import os
 
-# 🛑 CONFIGURACIÓN DE MEMORIA Y CPU (DEBE IR OBLIGATORIAMENTE ANTES DE DEEPFACE)
+# 🛑 CONFIGURACIÓN DE MEMORIA Y CPU (DEBE IR ANTES DE IMPORTAR DEEPFACE)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -73,22 +73,43 @@ USUARIOS_CONFIG = {
     "prueba": {"sheet_name": "Pruebas", "pin": "1234"}
 }
 
-def arreglar_orientacion_imagen(ruta_imagen):
-    """Comprime la imagen a 300x300 px y calidad 60% para minimizar consumo de disco y RAM"""
+def procesar_y_guardar_foto_ligera(file_storage, destino_path):
+    """
+    Recibe la foto gigante enviada por el APK y la comprime de inmediato
+    en la memoria usando OpenCV para NO agotar la RAM de Render.
+    """
     try:
-        image = Image.open(ruta_imagen)
-        image = ImageOps.exif_transpose(image)
-        image.thumbnail((300, 300))
-        image.save(ruta_imagen, quality=60, optimize=True)
+        in_memory_bytes = np.frombuffer(file_storage.read(), np.uint8)
+        img = cv2.imdecode(in_memory_bytes, cv2.IMREAD_COLOR)
+        del in_memory_bytes
+
+        if img is not None:
+            h, w = img.shape[:2]
+            max_size = 500  # Tamaño máximo óptimo para DeepFace
+            if max(h, w) > max_size:
+                scale = max_size / float(max(h, w))
+                new_w, new_h = int(w * scale), int(h * scale)
+                img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+            # Guarda en calidad 70% (pasa de 8MB a solo 80KB)
+            cv2.imwrite(destino_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            del img
+            gc.collect()
+            return True
     except Exception as e:
-        print(f"⚠️ Error orientación/resize: {e}")
+        print(f"⚠️ Error procesando imagen en memoria: {e}")
+    
+    # Fallback tradicional si falla OpenCV
+    file_storage.seek(0)
+    file_storage.save(destino_path)
+    return False
 
 def borrar_cache_biometrico():
-    """Borra el archivo .pkl precalculado de DeepFace cuando se añade o elimina un usuario"""
+    """Borra el archivo precalculado de DeepFace cuando se añade o elimina un usuario"""
     pkl_path = os.path.join(ROSTROS_DIR, "representations_facenet.pkl")
     if os.path.exists(pkl_path):
         os.remove(pkl_path)
-        print("♻️ Caché biométrico eliminado y actualizado.")
+        print("♻️ Caché biométrico eliminado.")
 
 def sincronizar_desde_cloudinary(forzar=False):
     try:
@@ -117,7 +138,6 @@ def sincronizar_desde_cloudinary(forzar=False):
                     if response.status_code == 200:
                         with open(dest_file, "wb") as f:
                             f.write(response.content)
-                        arreglar_orientacion_imagen(dest_file)
                         hubo_cambios = True
                         
         if hubo_cambios:
@@ -144,11 +164,8 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 
 @app.route("/", methods=["GET", "HEAD"])
 def status_check():
-    return jsonify({"status": "online", "mensaje": "Servidor Biométrico Optimizado Activo 🚀"}), 200
+    return jsonify({"status": "online", "mensaje": "Servidor Biométrico Ultra Optimizado Activo 🚀"}), 200
 
-# ==========================================
-# 🚀 DETECCIÓN EN VIVO RÁPIDA (STREAM)
-# ==========================================
 @app.route("/api/stream_detect", methods=["POST"])
 def stream_detect():
     if 'photo' not in request.files:
@@ -175,9 +192,6 @@ def login():
         return jsonify({"mensaje": "Exito", "sheet_assigned": USUARIOS_CONFIG[user]["sheet_name"]}), 200
     return jsonify({"error": "Credenciales incorrectas"}), 401
 
-# ==========================================
-# 📷 REGISTRO DE ROSTRO
-# ==========================================
 @app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
 @app.route("/api/register-face", methods=["POST"])
@@ -191,8 +205,7 @@ def register():
     if not os.path.exists(usuario_dir): os.makedirs(usuario_dir)
         
     local_path = os.path.join(usuario_dir, "registro.jpg")
-    file.save(local_path)
-    arreglar_orientacion_imagen(local_path)
+    procesar_y_guardar_foto_ligera(file, local_path)
     
     borrar_cache_biometrico()
     
@@ -203,9 +216,6 @@ def register():
 
     return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
 
-# ==========================================
-# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA
-# ==========================================
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
 @app.route("/api/check-attendance", methods=["POST"])
@@ -219,8 +229,8 @@ def facecheck():
     file = request.files['photo']
     temp_path = os.path.join(ROSTROS_DIR, f"temp_{datetime.now().timestamp()}.jpg")
     
-    file.save(temp_path)
-    arreglar_orientacion_imagen(temp_path)
+    # 🚀 REDUCE LA FOTO EN MEMORIA DIRECTAMENTE
+    procesar_y_guardar_foto_ligera(file, temp_path)
     
     mejor_precision = 0.0
     mejor_usuario = "Desconocido"
@@ -254,7 +264,6 @@ def facecheck():
         print(f"⚠️ Error DeepFace Find: {e}")
         
     finally:
-        # 🧹 LIMPIEZA RIGUROSA EN CADA PETICIÓN
         if os.path.exists(temp_path):
             os.remove(temp_path)
         gc.collect()
