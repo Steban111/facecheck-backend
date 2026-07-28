@@ -177,13 +177,21 @@ def status_check():
 @app.route("/stream_detect", methods=["POST", "OPTIONS"])
 @app.route("/api/stream_detect", methods=["POST", "OPTIONS"])
 def stream_detect():
+    # 1. RESTAURAMOS LOS PERMISOS MANUALES QUE TU APP EXIGE (CORS PRE-FLIGHT)
     if request.method == "OPTIONS":
-        return jsonify({"status": "ok"}), 200
+        response = jsonify({"status": "ok"})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "*")
+        response.headers.add("Access-Control-Allow-Methods", "*")
+        return response, 200
 
     file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
     
+    # 2. DEVOLVEMOS CÓDIGO 200 SIEMPRE PARA QUE LA APP NO SE CONGELE
     if not file:
-        return jsonify({"detectado": False}), 400
+        res = jsonify({"detectado": False})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
 
     try:
         in_memory_bytes = np.frombuffer(file.read(), np.uint8)
@@ -191,9 +199,11 @@ def stream_detect():
         del in_memory_bytes
 
         if img is None:
-            return jsonify({"detectado": False}), 400
+            res = jsonify({"detectado": False})
+            res.headers.add("Access-Control-Allow-Origin", "*")
+            return res, 200
 
-        # scaleFactor=1.2 es mucho más eficiente en recursos que 1.1 y sigue siendo preciso
+        # Mantenemos la eficiencia del scaleFactor=1.2 para que Render no sufra
         faces = face_cascade.detectMultiScale(img, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
 
         if len(faces) == 0:
@@ -208,14 +218,20 @@ def stream_detect():
 
         hay_rostro = len(faces) > 0
         del img
-        gc.collect() # Forzar limpieza RAM
+        gc.collect()
 
         print(f"📸 Stream -> Caras: {len(faces)} | Color: {'Morado' if hay_rostro else 'Gris'}")
-        return jsonify({"detectado": hay_rostro}), 200
+        
+        # 3. ENVIAMOS RESPUESTA CON PERMISOS PARA QUE CAMBIE A MORADO
+        res = jsonify({"detectado": hay_rostro})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
 
     except Exception as e:
         print(f"⚠️ Error stream_detect: {e}")
-        return jsonify({"detectado": False}), 500
+        res = jsonify({"detectado": False})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
 
 # ==========================================
 # 🔑 LOGIN ULTRA COMPATIBLE
