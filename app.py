@@ -1,4 +1,4 @@
-iimport os
+import os
 
 # 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
