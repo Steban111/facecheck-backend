@@ -26,7 +26,7 @@ import cloudinary.uploader
 import cloudinary.api
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 ROSTROS_DIR = "rostros"
 
@@ -176,7 +176,6 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Cohete Activo 🚀"}), 200
 
-
 # ==========================================
 # 🚀 DETECCIÓN EN VIVO RÁPIDA (STREAM)
 # ==========================================
@@ -187,14 +186,12 @@ def stream_detect():
     
     try:
         file = request.files['photo']
-        # 1. Lee los bytes directamente en memoria (Evita imagen en None)
         in_memory_bytes = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(in_memory_bytes, cv2.IMREAD_GRAYSCALE)
         
         if img is None:
             return jsonify({"detectado": False}), 200
             
-        # 2. Sensibilidad ajustada (scaleFactor=1.1 y minNeighbors=3 para detectar fácil la cara)
         faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
         
         return jsonify({"detectado": len(faces) > 0}), 200
@@ -202,15 +199,32 @@ def stream_detect():
         print(f"⚠️ Error stream_detect: {e}")
         return jsonify({"detectado": False}), 200
 
-@app.route("/login", methods=["POST"])
-@app.route("/api/login", methods=["POST"])
+# ==========================================
+# 🔑 LOGIN ULTRA COMPATIBLE
+# ==========================================
+@app.route("/login", methods=["POST", "OPTIONS"])
+@app.route("/api/login", methods=["POST", "OPTIONS"])
 def login():
-    data = request.json or {}
-    user = data.get("username", "").strip().lower()
-    pin = data.get("pin", "").strip()
-    if user in USUARIOS_CONFIG and USUARIOS_CONFIG[user]["pin"] == pin:
-        return jsonify({"mensaje": "Exito", "sheet_assigned": USUARIOS_CONFIG[user]["sheet_name"]}), 200
-    return jsonify({"error": "Credenciales incorrectas"}), 401
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
+    data = request.get_json(silent=True) or request.form or {}
+
+    user = str(data.get("username") or data.get("user") or data.get("usuario") or "").strip().lower()
+    pin = str(data.get("pin") or data.get("password") or "").strip()
+
+    if user in USUARIOS_CONFIG and str(USUARIOS_CONFIG[user]["pin"]) == pin:
+        target_sheet = USUARIOS_CONFIG[user]["sheet_name"]
+        return jsonify({
+            "mensaje": "Exito",
+            "success": True,
+            "status": "ok",
+            "sheet_assigned": target_sheet,
+            "sheet_name": target_sheet,
+            "usuario": user
+        }), 200
+
+    return jsonify({"error": "Credenciales incorrectas", "success": False}), 401
 
 # ==========================================
 # 📷 REGISTRO DE ROSTRO
@@ -255,7 +269,6 @@ def facecheck():
     file = request.files['photo']
     temp_path = os.path.join(ROSTROS_DIR, f"temp_{datetime.now().timestamp()}.jpg")
     
-    # 🚀 REDUCE LA FOTO EN MEMORIA DIRECTAMENTE
     procesar_y_guardar_foto_ligera(file, temp_path)
     
     mejor_precision = 0.0
