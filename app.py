@@ -1,10 +1,14 @@
 import os
+
+# 🛑 CONFIGURACIÓN DE MEMORIA TENSORFLOW (DEBE IR ANTES DE IMPORTAR DEEPFACE)
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 import shutil
 import requests
 import numpy as np
 import cv2
-import gc  # <-- NUEVO: Recolector de basura para liberar memoria RAM
-import pandas as pd
+import gc
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageOps
@@ -67,11 +71,12 @@ USUARIOS_CONFIG = {
 }
 
 def arreglar_orientacion_imagen(ruta_imagen):
+    """Comprime la imagen a 300x300 px para ahorrar espacio en disco duro"""
     try:
         image = Image.open(ruta_imagen)
         image = ImageOps.exif_transpose(image)
-        image.thumbnail((600, 600))  # Tamaño optimizado para procesamiento ultra rápido
-        image.save(ruta_imagen, quality=80)
+        image.thumbnail((300, 300))  # Compresión máxima optimizada para DeepFace
+        image.save(ruta_imagen, quality=60, optimize=True)
     except Exception as e:
         print(f"⚠️ Error orientación/resize: {e}")
 
@@ -80,7 +85,7 @@ def borrar_cache_biometrico():
     pkl_path = os.path.join(ROSTROS_DIR, "representations_facenet.pkl")
     if os.path.exists(pkl_path):
         os.remove(pkl_path)
-        print("♻️ Caché biométrico actualizado (se generará de nuevo).")
+        print("♻️ Caché biométrico actualizado.")
 
 def sincronizar_desde_cloudinary(forzar=False):
     try:
@@ -138,9 +143,6 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Optimizado Activo 🚀"}), 200
 
-# ==========================================
-# 🚀 DETECCIÓN EN VIVO ULTRA RÁPIDA (GRIS ➔ MORADO)
-# ==========================================
 @app.route("/api/stream_detect", methods=["POST"])
 def stream_detect():
     if 'photo' not in request.files:
@@ -167,9 +169,6 @@ def login():
         return jsonify({"mensaje": "Exito", "sheet_assigned": USUARIOS_CONFIG[user]["sheet_name"]}), 200
     return jsonify({"error": "Credenciales incorrectas"}), 401
 
-# ==========================================
-# 📷 REGISTRO
-# ==========================================
 @app.route("/register", methods=["POST"])
 @app.route("/api/register", methods=["POST"])
 @app.route("/api/register-face", methods=["POST"])
@@ -186,7 +185,7 @@ def register():
     file.save(local_path)
     arreglar_orientacion_imagen(local_path)
     
-    borrar_cache_biometrico() # Forzar re-cálculo para incluir al nuevo usuario
+    borrar_cache_biometrico()
     
     try:
         cloudinary.uploader.upload(local_path, public_id="registro", folder=f"rostros/{nombre}", overwrite=True)
@@ -195,9 +194,6 @@ def register():
 
     return jsonify({"mensaje": f"Usuario {nombre} registrado"}), 200
 
-# ==========================================
-# ✅ ASISTENCIA (BÚSQUEDA VECTORIAL MASIVA)
-# ==========================================
 @app.route("/facecheck", methods=["POST"])
 @app.route("/api/facecheck", methods=["POST"])
 @app.route("/api/check-attendance", methods=["POST"])
@@ -219,7 +215,6 @@ def facecheck():
     autorizado = False
     
     try:
-        # 🚀 LA GRAN MAGIA AQUÍ: Busca en toda la base de datos al instante sin bucles lentos
         dfs = DeepFace.find(
             img_path=temp_path,
             db_path=ROSTROS_DIR,
@@ -236,7 +231,6 @@ def facecheck():
             distancia = mejor_match["distance"]
             ruta_match = mejor_match["identity"]
             
-            # Convertir la distancia coseno a porcentaje
             precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
             
             if precision >= 65.0:
@@ -248,7 +242,6 @@ def facecheck():
         print(f"⚠️ Error DeepFace Find: {e}")
         
     finally:
-        # 🧹 LIMPIEZA OBLIGATORIA: Borra la foto temporal y libera la memoria RAM forzosamente
         if os.path.exists(temp_path):
             os.remove(temp_path)
         gc.collect()
@@ -278,6 +271,11 @@ def limpiar_cache():
         return jsonify({"mensaje": "Caché borrada y resincronizada exitosamente"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    sincronizar_desde_cloudinary(forzar=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     sincronizar_desde_cloudinary(forzar=True)
