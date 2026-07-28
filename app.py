@@ -176,6 +176,7 @@ def registrar_asistencia(usuario_carpeta, target_sheet_name="Pruebas"):
 def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Biométrico Cohete Activo 🚀"}), 200
 
+
 # ==========================================
 # 🚀 DETECCIÓN EN VIVO RÁPIDA (STREAM)
 # ==========================================
@@ -186,16 +187,19 @@ def stream_detect():
     
     try:
         file = request.files['photo']
-        npimg = np.fromfile(file, np.uint8)
-        img = cv2.imdecode(npimg, cv2.IMREAD_GRAYSCALE)
+        # 1. Lee los bytes directamente en memoria (Evita imagen en None)
+        in_memory_bytes = np.frombuffer(file.read(), np.uint8)
+        img = cv2.imdecode(in_memory_bytes, cv2.IMREAD_GRAYSCALE)
         
         if img is None:
-            return jsonify({"detectado": False}), 400
+            return jsonify({"detectado": False}), 200
             
-        faces = face_cascade.detectMultiScale(img, scaleFactor=1.3, minNeighbors=4, minSize=(30, 30))
+        # 2. Sensibilidad ajustada (scaleFactor=1.1 y minNeighbors=3 para detectar fácil la cara)
+        faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
         
         return jsonify({"detectado": len(faces) > 0}), 200
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Error stream_detect: {e}")
         return jsonify({"detectado": False}), 200
 
 @app.route("/login", methods=["POST"])
