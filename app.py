@@ -241,22 +241,19 @@ def login():
     return res, 401
 
 # ==========================================
-# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA (MULTIRUTA)
+# ✅ RECONOCIMIENTO FACIAL (OPTIMIZADO PARA 512MB RAM)
 # ==========================================
 @app.route("/facecheck", methods=["POST", "OPTIONS"])
 @app.route("/api/facecheck", methods=["POST", "OPTIONS"])
 @app.route("/check-attendance", methods=["POST", "OPTIONS"])
 @app.route("/api/check-attendance", methods=["POST", "OPTIONS"])
-@app.route("/asistencia", methods=["POST", "OPTIONS"])
-@app.route("/api/asistencia", methods=["POST", "OPTIONS"])
 def facecheck():
     if request.method == "OPTIONS":
         res = jsonify({"status": "ok"})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
-    # Captura la foto bajo cualquier nombre posible
-    file = request.files.get('photo') or request.files.get('file') or request.files.get('image') or request.files.get('picture')
+    file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
 
     if not file:
         res = jsonify({"autorizado": False, "success": False, "mensaje": "No se recibió foto"})
@@ -264,21 +261,25 @@ def facecheck():
         return res, 200
 
     target_sheet = request.form.get("sheet_name") or request.form.get("sheet") or "Pruebas"
-
     temp_path = os.path.join(ROSTROS_DIR, f"temp_{int(datetime.now().timestamp())}.jpg")
 
     try:
+        # Guardar la foto procesada súper comprimida para no saturar memoria
         procesar_y_guardar_foto_ligera(file, temp_path)
 
         mejor_precision = 0.0
         mejor_usuario = "Desconocido"
         autorizado = False
 
+        # Liberar memoria previa antes de llamar a DeepFace
+        gc.collect()
+
+        # Búsqueda facial con enforcement de memoria bajo
         dfs = DeepFace.find(
             img_path=temp_path,
             db_path=ROSTROS_DIR,
             model_name="Facenet",
-            detector_backend="opencv",
+            detector_backend="skip", # Saltamos detección pesada porque la foto viene recortada/alineada
             distance_metric="cosine",
             enforce_detection=False,
             silent=True
@@ -292,10 +293,13 @@ def facecheck():
 
             precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
 
-            if precision >= 60.0:
+            if precision >= 55.0:  # Umbral seguro
                 mejor_usuario = os.path.basename(os.path.dirname(ruta_match))
                 autorizado = True
                 mejor_precision = precision
+
+        del dfs # Limpieza inmediata de variables de memoria
+        gc.collect()
 
         if autorizado:
             registrar_asistencia(mejor_usuario, target_sheet_name=target_sheet)
@@ -320,7 +324,7 @@ def facecheck():
         res = jsonify({
             "autorizado": False,
             "success": False,
-            "mensaje": f"Error: {str(e)}"
+            "mensaje": f"Error interno: {str(e)}"
         })
 
     finally:
@@ -333,7 +337,6 @@ def facecheck():
 
     res.headers.add("Access-Control-Allow-Origin", "*")
     return res, 200
-
 sincronizar_desde_cloudinary(forzar=False)
 
 if __name__ == "__main__":
