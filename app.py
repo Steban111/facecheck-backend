@@ -1,6 +1,6 @@
 import os
 
-# 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU
+# 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU PARA RENDER FREE
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -26,7 +26,8 @@ import cloudinary.uploader
 import cloudinary.api
 
 app = Flask(__name__)
-CORS(app)  # Configuración limpia de CORS
+# Permitimos CORS globalmente para evitar bloqueos del celular
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 ROSTROS_DIR = "rostros"
 
@@ -173,55 +174,49 @@ def status_check():
 # ==========================================
 # 🚀 DETECCIÓN EN VIVO BLINDADA (STREAM - GRIS A MORADO)
 # ==========================================
-# ==========================================
-# 🚀 DETECCIÓN EN VIVO (STREAM - GRIS A MORADO)
-# ==========================================
 @app.route("/stream_detect", methods=["POST", "OPTIONS"])
 @app.route("/api/stream_detect", methods=["POST", "OPTIONS"])
 def stream_detect():
-    # Responder de inmediato a verificaciones CORS del celular
     if request.method == "OPTIONS":
-        response = jsonify({"status": "ok"})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "*")
-        response.headers.add("Access-Control-Allow-Methods", "*")
-        return response, 200
+        return jsonify({"status": "ok"}), 200
 
-    # Aceptar la foto desde cualquier nombre de parámetro común
     file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
     
     if not file:
-        return jsonify({"detectado": False}), 200
+        return jsonify({"detectado": False}), 400
 
     try:
         in_memory_bytes = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(in_memory_bytes, cv2.IMREAD_GRAYSCALE)
+        del in_memory_bytes
 
         if img is None:
-            return jsonify({"detectado": False}), 200
+            return jsonify({"detectado": False}), 400
 
-        # Detección frontal
-        faces = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
+        # scaleFactor=1.2 es mucho más eficiente en recursos que 1.1 y sigue siendo preciso
+        faces = face_cascade.detectMultiScale(img, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
 
-        # Detección con rotación (por si el sensor del teléfono la gira)
         if len(faces) == 0:
             img_rot = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-            faces = face_cascade.detectMultiScale(img_rot, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
+            faces = face_cascade.detectMultiScale(img_rot, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
+            del img_rot
 
         if len(faces) == 0:
             img_rot_ccw = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            faces = face_cascade.detectMultiScale(img_rot_ccw, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
+            faces = face_cascade.detectMultiScale(img_rot_ccw, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
+            del img_rot_ccw
 
         hay_rostro = len(faces) > 0
-        print(f"📸 Detección en vivo -> Caras: {len(faces)} | Enviar morado: {hay_rostro}")
+        del img
+        gc.collect() # Forzar limpieza RAM
 
-        res = jsonify({"detectado": hay_rostro})
-        res.headers.add("Access-Control-Allow-Origin", "*")
-        return res, 200
+        print(f"📸 Stream -> Caras: {len(faces)} | Color: {'Morado' if hay_rostro else 'Gris'}")
+        return jsonify({"detectado": hay_rostro}), 200
 
     except Exception as e:
         print(f"⚠️ Error stream_detect: {e}")
-        return jsonify({"detectado": False}), 200
+        return jsonify({"detectado": False}), 500
+
 # ==========================================
 # 🔑 LOGIN ULTRA COMPATIBLE
 # ==========================================
@@ -261,6 +256,7 @@ def register():
 
     if 'photo' not in request.files or 'name' not in request.form:
         return jsonify({"error": "Faltan datos"}), 400
+        
     file = request.files['photo']
     nombre = request.form['name'].strip().lower().replace(" ", "_")
     
