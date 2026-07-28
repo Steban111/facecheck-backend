@@ -1,11 +1,9 @@
 import os
 
-# 🛑 CONFIGURACIÓN ESTRICTA DE MEMORIA Y CPU
+# 🛑 CONFIGURACIÓN DE MEMORIA Y CPU
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
-os.environ["TF_NUM_INTEROP_THREADS"] = "1"
 
 import shutil
 import requests
@@ -28,11 +26,10 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 ROSTROS_DIR = "rostros"
-
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
-# Detector Haar Cascade ultra ligero
+# Detector Haar Cascade ligero
 xml_filename = "haarcascade_frontalface_default.xml"
 if not os.path.exists(xml_filename):
     print("📥 Descargando Haar Cascade...")
@@ -162,7 +159,7 @@ def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Activo 🚀"}), 200
 
 # ==========================================
-# 🚀 DETECCIÓN EN VIVO (STREAM - GRIS A MORADO)
+# 🚀 DETECCIÓN EN VIVO (STREAM)
 # ==========================================
 @app.route("/stream_detect", methods=["POST", "OPTIONS"])
 @app.route("/api/stream_detect", methods=["POST", "OPTIONS"])
@@ -196,11 +193,6 @@ def stream_detect():
             faces = face_cascade.detectMultiScale(img_rot, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
             del img_rot
 
-        if len(faces) == 0:
-            img_rot_ccw = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            faces = face_cascade.detectMultiScale(img_rot_ccw, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
-            del img_rot_ccw
-
         hay_rostro = len(faces) > 0
         del img
         gc.collect()
@@ -212,13 +204,12 @@ def stream_detect():
         return res, 200
 
     except Exception as e:
-        print(f"⚠️ Error stream_detect: {e}")
         res = jsonify({"detectado": False})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
 # ==========================================
-# 🔑 LOGIN ULTRA COMPATIBLE
+# 🔑 LOGIN
 # ==========================================
 @app.route("/login", methods=["POST", "OPTIONS"])
 @app.route("/api/login", methods=["POST", "OPTIONS"])
@@ -229,7 +220,6 @@ def login():
         return res, 200
 
     data = request.get_json(silent=True) or request.form or {}
-
     user = str(data.get("username") or data.get("user") or data.get("usuario") or "").strip().lower()
     pin = str(data.get("pin") or data.get("password") or "").strip()
 
@@ -251,62 +241,30 @@ def login():
     return res, 401
 
 # ==========================================
-# 📷 REGISTRO DE ROSTRO
-# ==========================================
-@app.route("/register", methods=["POST", "OPTIONS"])
-@app.route("/api/register", methods=["POST", "OPTIONS"])
-@app.route("/api/register-face", methods=["POST", "OPTIONS"])
-def register():
-    if request.method == "OPTIONS":
-        res = jsonify({"status": "ok"})
-        res.headers.add("Access-Control-Allow-Origin", "*")
-        return res, 200
-
-    if 'photo' not in request.files or 'name' not in request.form:
-        return jsonify({"error": "Faltan datos"}), 400
-        
-    file = request.files['photo']
-    nombre = request.form['name'].strip().lower().replace(" ", "_")
-    
-    usuario_dir = os.path.join(ROSTROS_DIR, nombre)
-    if not os.path.exists(usuario_dir): os.makedirs(usuario_dir)
-        
-    local_path = os.path.join(usuario_dir, "registro.jpg")
-    procesar_y_guardar_foto_ligera(file, local_path)
-    
-    borrar_cache_biometrico()
-    
-    try:
-        cloudinary.uploader.upload(local_path, public_id="registro", folder=f"rostros/{nombre}", overwrite=True)
-    except Exception as e:
-        print(f"Cloudinary error: {e}")
-
-    res = jsonify({"mensaje": f"Usuario {nombre} registrado"})
-    res.headers.add("Access-Control-Allow-Origin", "*")
-    return res, 200
-
-# ==========================================
-# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA (ULTRA LIGERO)
+# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA (MULTIRUTA)
 # ==========================================
 @app.route("/facecheck", methods=["POST", "OPTIONS"])
 @app.route("/api/facecheck", methods=["POST", "OPTIONS"])
+@app.route("/check-attendance", methods=["POST", "OPTIONS"])
 @app.route("/api/check-attendance", methods=["POST", "OPTIONS"])
+@app.route("/asistencia", methods=["POST", "OPTIONS"])
+@app.route("/api/asistencia", methods=["POST", "OPTIONS"])
 def facecheck():
     if request.method == "OPTIONS":
         res = jsonify({"status": "ok"})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
-    file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
+    # Captura la foto bajo cualquier nombre posible
+    file = request.files.get('photo') or request.files.get('file') or request.files.get('image') or request.files.get('picture')
 
     if not file:
-        res = jsonify({"autorizado": False, "mensaje": "Falta foto"})
+        res = jsonify({"autorizado": False, "success": False, "mensaje": "No se recibió foto"})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
     target_sheet = request.form.get("sheet_name") or request.form.get("sheet") or "Pruebas"
 
-    # Archivo temporal único
     temp_path = os.path.join(ROSTROS_DIR, f"temp_{int(datetime.now().timestamp())}.jpg")
 
     try:
@@ -316,7 +274,6 @@ def facecheck():
         mejor_usuario = "Desconocido"
         autorizado = False
 
-        # Ejecutamos la búsqueda biométrica usando opencv (detector ligero)
         dfs = DeepFace.find(
             img_path=temp_path,
             db_path=ROSTROS_DIR,
@@ -335,7 +292,7 @@ def facecheck():
 
             precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
 
-            if precision >= 60.0:  # Umbral flexible
+            if precision >= 60.0:
                 mejor_usuario = os.path.basename(os.path.dirname(ruta_match))
                 autorizado = True
                 mejor_precision = precision
@@ -359,7 +316,7 @@ def facecheck():
             })
 
     except Exception as e:
-        print(f"⚠️ Error controlado en facecheck: {e}")
+        print(f"⚠️ Error en asistencia: {e}")
         res = jsonify({
             "autorizado": False,
             "success": False,
@@ -376,17 +333,6 @@ def facecheck():
 
     res.headers.add("Access-Control-Allow-Origin", "*")
     return res, 200
-
-@app.route('/limpiar_cache', methods=['GET'])
-def limpiar_cache():
-    try:
-        if os.path.exists(ROSTROS_DIR):
-            shutil.rmtree(ROSTROS_DIR)
-            os.makedirs(ROSTROS_DIR)
-        sincronizar_desde_cloudinary(forzar=True)
-        return jsonify({"mensaje": "Caché borrada exitosamente"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 sincronizar_desde_cloudinary(forzar=False)
 
