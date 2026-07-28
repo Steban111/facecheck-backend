@@ -8,5 +8,6 @@ numpy<2.0.0
 oauth2client
 requests
 opencv-python-headless==4.8.1.78
-deepface
+tensorflow-cpu
 tf-keras
+deepface
