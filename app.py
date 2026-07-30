@@ -264,7 +264,10 @@ def facecheck():
     temp_path = os.path.join(ROSTROS_DIR, f"temp_{int(datetime.now().timestamp())}.jpg")
 
     try:
-        # Guardar la foto procesada súper comprimida para no saturar memoria
+        # 1. Intentar sincronizar fotos si la carpeta está vacía
+        sincronizar_desde_cloudinary(forzar=False)
+
+        # 2. Guardar la foto procesada súper comprimida para no saturar memoria
         procesar_y_guardar_foto_ligera(file, temp_path)
 
         mejor_precision = 0.0
@@ -337,8 +340,8 @@ def facecheck():
 
     res.headers.add("Access-Control-Allow-Origin", "*")
     return res, 200
-sincronizar_desde_cloudinary(forzar=False)
 
 if __name__ == "__main__":
+    sincronizar_desde_cloudinary(forzar=False)
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
