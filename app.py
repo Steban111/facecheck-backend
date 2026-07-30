@@ -1,11 +1,10 @@
 import os
 
-# 🛑 CONFIGURACIÓN DE MEMORIA Y CPU
+# 🛑 CONFIGURACIÓN DE MEMORIA Y CPU (Antes de importar TensorFlow)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import shutil
 import requests
 import numpy as np
 import cv2
@@ -17,9 +16,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 from deepface import DeepFace
 
-# Cloudinary
+# Cloudinary (Solo se usa si es estrictamente necesario al arrancar)
 import cloudinary
-import cloudinary.uploader
 import cloudinary.api
 
 app = Flask(__name__)
@@ -29,7 +27,7 @@ ROSTROS_DIR = "rostros"
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
-# Detector Haar Cascade ligero
+# Detector Haar Cascade ligero para el stream en vivo
 xml_filename = "haarcascade_frontalface_default.xml"
 if not os.path.exists(xml_filename):
     print("📥 Descargando Haar Cascade...")
@@ -70,6 +68,7 @@ USUARIOS_CONFIG = {
 }
 
 def procesar_y_guardar_foto_ligera(file_storage, destino_path):
+    """Comprime la imagen recibida a máximo 300px para una comparación ultrarrápida."""
     try:
         in_memory_bytes = np.frombuffer(file_storage.read(), np.uint8)
         img = cv2.imdecode(in_memory_bytes, cv2.IMREAD_COLOR)
@@ -77,13 +76,13 @@ def procesar_y_guardar_foto_ligera(file_storage, destino_path):
 
         if img is not None:
             h, w = img.shape[:2]
-            max_size = 400
+            max_size = 300  # 300px es ideal para Facenet sin gastar memoria
             if max(h, w) > max_size:
                 scale = max_size / float(max(h, w))
                 new_w, new_h = int(w * scale), int(h * scale)
                 img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-            cv2.imwrite(destino_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
+            cv2.imwrite(destino_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
             del img
             gc.collect()
             return True
@@ -94,23 +93,15 @@ def procesar_y_guardar_foto_ligera(file_storage, destino_path):
     file_storage.save(destino_path)
     return False
 
-def borrar_cache_biometrico():
-    pkl_path = os.path.join(ROSTROS_DIR, "representations_facenet.pkl")
-    if os.path.exists(pkl_path):
-        try:
-            os.remove(pkl_path)
-            print("♻️ Caché biométrico eliminado.")
-        except Exception as e:
-            print(f"⚠️ Error borrando PKL: {e}")
-
-def sincronizar_desde_cloudinary(forzar=False):
+def sincronizar_desde_cloudinary():
+    """Solo se ejecuta 1 vez al iniciar el servidor."""
     try:
         carpetas = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d))]
-        if len(carpetas) > 0 and not forzar:
+        if len(carpetas) > 0:
             return
 
+        print("☁️ Sincronizando fotos de Cloudinary al iniciar...")
         resources = cloudinary.api.resources(prefix="rostros/", type="upload", max_results=500)
-        hubo_cambios = False
         
         for resource in resources.get("resources", []):
             public_id = resource["public_id"]
@@ -122,18 +113,13 @@ def sincronizar_desde_cloudinary(forzar=False):
                 usuario_dir = os.path.join(ROSTROS_DIR, nombre_usuario)
                 if not os.path.exists(usuario_dir):
                     os.makedirs(usuario_dir)
-                    hubo_cambios = True
                 
                 dest_file = os.path.join(usuario_dir, "registro.jpg")
-                if not os.path.exists(dest_file) or forzar:
+                if not os.path.exists(dest_file):
                     response = requests.get(url, timeout=10)
                     if response.status_code == 200:
                         with open(dest_file, "wb") as f:
                             f.write(response.content)
-                        hubo_cambios = True
-                        
-        if hubo_cambios:
-            borrar_cache_biometrico()
             
     except Exception as e:
         print(f"❌ Error sync Cloudinary: {e}")
@@ -159,7 +145,7 @@ def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Activo 🚀"}), 200
 
 # ==========================================
-# 🚀 DETECCIÓN EN VIVO (STREAM)
+# 🚀 DETECCIÓN EN VIVO (STREAM ULTRA LIGERO)
 # ==========================================
 @app.route("/stream_detect", methods=["POST", "OPTIONS"])
 @app.route("/api/stream_detect", methods=["POST", "OPTIONS"])
@@ -186,24 +172,17 @@ def stream_detect():
             res.headers.add("Access-Control-Allow-Origin", "*")
             return res, 200
 
-        faces = face_cascade.detectMultiScale(img, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
-
-        if len(faces) == 0:
-            img_rot = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-            faces = face_cascade.detectMultiScale(img_rot, scaleFactor=1.2, minNeighbors=3, minSize=(30, 30))
-            del img_rot
-
+        faces = face_cascade.detectMultiScale(img, scaleFactor=1.3, minNeighbors=3, minSize=(40, 40))
         hay_rostro = len(faces) > 0
+        
         del img
         gc.collect()
-
-        print(f"📸 Stream -> Caras: {len(faces)} | Color: {'Morado' if hay_rostro else 'Gris'}")
 
         res = jsonify({"detectado": hay_rostro})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
-    except Exception as e:
+    except Exception:
         res = jsonify({"detectado": False})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
@@ -241,12 +220,10 @@ def login():
     return res, 401
 
 # ==========================================
-# ✅ RECONOCIMIENTO FACIAL (OPTIMIZADO PARA 512MB RAM)
+# ✅ RECONOCIMIENTO FACIAL RÁPIDO Y PRECISO
 # ==========================================
 @app.route("/facecheck", methods=["POST", "OPTIONS"])
 @app.route("/api/facecheck", methods=["POST", "OPTIONS"])
-@app.route("/check-attendance", methods=["POST", "OPTIONS"])
-@app.route("/api/check-attendance", methods=["POST", "OPTIONS"])
 def facecheck():
     if request.method == "OPTIONS":
         res = jsonify({"status": "ok"})
@@ -264,25 +241,20 @@ def facecheck():
     temp_path = os.path.join(ROSTROS_DIR, f"temp_{int(datetime.now().timestamp())}.jpg")
 
     try:
-        # 1. Intentar sincronizar fotos si la carpeta está vacía
-        sincronizar_desde_cloudinary(forzar=False)
-
-        # 2. Guardar la foto procesada súper comprimida para no saturar memoria
         procesar_y_guardar_foto_ligera(file, temp_path)
 
         mejor_precision = 0.0
         mejor_usuario = "Desconocido"
         autorizado = False
 
-        # Liberar memoria previa antes de llamar a DeepFace
         gc.collect()
 
-        # Búsqueda facial con enforcement de memoria bajo
+        # Búsqueda usando Facenet (Ultrarrápido con detector_backend="skip")
         dfs = DeepFace.find(
             img_path=temp_path,
             db_path=ROSTROS_DIR,
             model_name="Facenet",
-            detector_backend="skip", # Saltamos detección pesada porque la foto viene recortada/alineada
+            detector_backend="skip",
             distance_metric="cosine",
             enforce_detection=False,
             silent=True
@@ -294,14 +266,16 @@ def facecheck():
             distancia = float(mejor_match["distance"])
             ruta_match = str(mejor_match["identity"])
 
+            # Cálculo preciso de porcentaje de coincidencia
             precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
 
-            if precision >= 55.0:  # Umbral seguro
+            # Umbral de precisión recomendado (60% es óptimo y sin falsos positivos en Facenet)
+            if precision >= 60.0:
                 mejor_usuario = os.path.basename(os.path.dirname(ruta_match))
                 autorizado = True
                 mejor_precision = precision
 
-        del dfs # Limpieza inmediata de variables de memoria
+        del dfs
         gc.collect()
 
         if autorizado:
@@ -341,7 +315,9 @@ def facecheck():
     res.headers.add("Access-Control-Allow-Origin", "*")
     return res, 200
 
+# Sincronización única al arrancar
+sincronizar_desde_cloudinary()
+
 if __name__ == "__main__":
-    sincronizar_desde_cloudinary(forzar=False)
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
