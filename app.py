@@ -16,7 +16,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 from deepface import DeepFace
 
-# Cloudinary (Solo se usa si es estrictamente necesario al arrancar)
+# Cloudinary
 import cloudinary
 import cloudinary.api
 
@@ -27,7 +27,7 @@ ROSTROS_DIR = "rostros"
 if not os.path.exists(ROSTROS_DIR):
     os.makedirs(ROSTROS_DIR)
 
-# Detector Haar Cascade ligero para el stream en vivo
+# Haar Cascade para stream
 xml_filename = "haarcascade_frontalface_default.xml"
 if not os.path.exists(xml_filename):
     print("📥 Descargando Haar Cascade...")
@@ -38,6 +38,7 @@ if not os.path.exists(xml_filename):
 
 face_cascade = cv2.CascadeClassifier(xml_filename)
 
+# Configuración de Cloudinary
 cloudinary.config(
     cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "n04i6zmx"),
     api_key = os.environ.get("CLOUDINARY_API_KEY", "922889323116662"),
@@ -61,6 +62,7 @@ try:
 except Exception as e:
     print(f"❌ Error Google Sheets: {e}")
 
+# CONFIGURACIÓN DE USUARIOS / PIN / HOJAS DE CALCULOS
 USUARIOS_CONFIG = {
     "steban": {"sheet_name": "Asistencia seminario sibimbe", "pin": "1999"},
     "liss": {"sheet_name": "Asistencia seminario riberas", "pin": "1302"},
@@ -68,7 +70,6 @@ USUARIOS_CONFIG = {
 }
 
 def procesar_y_guardar_foto_ligera(file_storage, destino_path):
-    """Comprime la imagen recibida a máximo 300px para una comparación ultrarrápida."""
     try:
         in_memory_bytes = np.frombuffer(file_storage.read(), np.uint8)
         img = cv2.imdecode(in_memory_bytes, cv2.IMREAD_COLOR)
@@ -76,7 +77,7 @@ def procesar_y_guardar_foto_ligera(file_storage, destino_path):
 
         if img is not None:
             h, w = img.shape[:2]
-            max_size = 300  # 300px es ideal para Facenet sin gastar memoria
+            max_size = 300
             if max(h, w) > max_size:
                 scale = max_size / float(max(h, w))
                 new_w, new_h = int(w * scale), int(h * scale)
@@ -94,13 +95,13 @@ def procesar_y_guardar_foto_ligera(file_storage, destino_path):
     return False
 
 def sincronizar_desde_cloudinary():
-    """Solo se ejecuta 1 vez al iniciar el servidor."""
+    """Descarga los rostros de Cloudinary al iniciar si la carpeta local está vacía."""
     try:
         carpetas = [d for d in os.listdir(ROSTROS_DIR) if os.path.isdir(os.path.join(ROSTROS_DIR, d))]
         if len(carpetas) > 0:
             return
 
-        print("☁️ Sincronizando fotos de Cloudinary al iniciar...")
+        print("☁️ Sincronizando fotos de Cloudinary...")
         resources = cloudinary.api.resources(prefix="rostros/", type="upload", max_results=500)
         
         for resource in resources.get("resources", []):
@@ -145,7 +146,38 @@ def status_check():
     return jsonify({"status": "online", "mensaje": "Servidor Activo 🚀"}), 200
 
 # ==========================================
-# 🚀 DETECCIÓN EN VIVO (STREAM ULTRA LIGERO)
+# 🔑 LOGIN POR PIN Y USUARIO
+# ==========================================
+@app.route("/login", methods=["POST", "OPTIONS"])
+@app.route("/api/login", methods=["POST", "OPTIONS"])
+def login():
+    if request.method == "OPTIONS":
+        res = jsonify({"status": "ok"})
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
+
+    data = request.get_json(silent=True) or request.form or {}
+    user = str(data.get("username") or data.get("user") or data.get("usuario") or "").strip().lower()
+    pin = str(data.get("pin") or data.get("password") or "").strip()
+
+    if user in USUARIOS_CONFIG and str(USUARIOS_CONFIG[user]["pin"]) == pin:
+        target_sheet = USUARIOS_CONFIG[user]["sheet_name"]
+        res = jsonify({
+            "mensaje": "Acceso Correcto",
+            "success": True,
+            "status": "ok",
+            "sheet_name": target_sheet,
+            "usuario": user
+        })
+        res.headers.add("Access-Control-Allow-Origin", "*")
+        return res, 200
+
+    res = jsonify({"error": "Usuario o PIN incorrectos", "success": False})
+    res.headers.add("Access-Control-Allow-Origin", "*")
+    return res, 401
+
+# ==========================================
+# 🚀 DETECCIÓN DE STREAMING
 # ==========================================
 @app.route("/stream_detect", methods=["POST", "OPTIONS"])
 @app.route("/api/stream_detect", methods=["POST", "OPTIONS"])
@@ -156,7 +188,6 @@ def stream_detect():
         return res, 200
 
     file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
-    
     if not file:
         res = jsonify({"detectado": False})
         res.headers.add("Access-Control-Allow-Origin", "*")
@@ -174,53 +205,19 @@ def stream_detect():
 
         faces = face_cascade.detectMultiScale(img, scaleFactor=1.3, minNeighbors=3, minSize=(40, 40))
         hay_rostro = len(faces) > 0
-        
         del img
         gc.collect()
 
         res = jsonify({"detectado": hay_rostro})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
-
     except Exception:
         res = jsonify({"detectado": False})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
 # ==========================================
-# 🔑 LOGIN
-# ==========================================
-@app.route("/login", methods=["POST", "OPTIONS"])
-@app.route("/api/login", methods=["POST", "OPTIONS"])
-def login():
-    if request.method == "OPTIONS":
-        res = jsonify({"status": "ok"})
-        res.headers.add("Access-Control-Allow-Origin", "*")
-        return res, 200
-
-    data = request.get_json(silent=True) or request.form or {}
-    user = str(data.get("username") or data.get("user") or data.get("usuario") or "").strip().lower()
-    pin = str(data.get("pin") or data.get("password") or "").strip()
-
-    if user in USUARIOS_CONFIG and str(USUARIOS_CONFIG[user]["pin"]) == pin:
-        target_sheet = USUARIOS_CONFIG[user]["sheet_name"]
-        res = jsonify({
-            "mensaje": "Exito",
-            "success": True,
-            "status": "ok",
-            "sheet_assigned": target_sheet,
-            "sheet_name": target_sheet,
-            "usuario": user
-        })
-        res.headers.add("Access-Control-Allow-Origin", "*")
-        return res, 200
-
-    res = jsonify({"error": "Credenciales incorrectas", "success": False})
-    res.headers.add("Access-Control-Allow-Origin", "*")
-    return res, 401
-
-# ==========================================
-# ✅ RECONOCIMIENTO FACIAL RÁPIDO Y PRECISO
+# ✅ RECONOCIMIENTO FACIAL Y ASISTENCIA
 # ==========================================
 @app.route("/facecheck", methods=["POST", "OPTIONS"])
 @app.route("/api/facecheck", methods=["POST", "OPTIONS"])
@@ -231,25 +228,22 @@ def facecheck():
         return res, 200
 
     file = request.files.get('photo') or request.files.get('file') or request.files.get('image')
-
     if not file:
         res = jsonify({"autorizado": False, "success": False, "mensaje": "No se recibió foto"})
         res.headers.add("Access-Control-Allow-Origin", "*")
         return res, 200
 
-    target_sheet = request.form.get("sheet_name") or request.form.get("sheet") or "Pruebas"
+    target_sheet = request.form.get("sheet_name") or "Pruebas"
     temp_path = os.path.join(ROSTROS_DIR, f"temp_{int(datetime.now().timestamp())}.jpg")
 
     try:
         procesar_y_guardar_foto_ligera(file, temp_path)
-
         mejor_precision = 0.0
         mejor_usuario = "Desconocido"
         autorizado = False
 
         gc.collect()
 
-        # Búsqueda usando Facenet (Ultrarrápido con detector_backend="skip")
         dfs = DeepFace.find(
             img_path=temp_path,
             db_path=ROSTROS_DIR,
@@ -266,10 +260,8 @@ def facecheck():
             distancia = float(mejor_match["distance"])
             ruta_match = str(mejor_match["identity"])
 
-            # Cálculo preciso de porcentaje de coincidencia
             precision = round(max(0.0, (1.0 - distancia) * 100.0), 2)
 
-            # Umbral de precisión recomendado (60% es óptimo y sin falsos positivos en Facenet)
             if precision >= 60.0:
                 mejor_usuario = os.path.basename(os.path.dirname(ruta_match))
                 autorizado = True
@@ -298,11 +290,7 @@ def facecheck():
 
     except Exception as e:
         print(f"⚠️ Error en asistencia: {e}")
-        res = jsonify({
-            "autorizado": False,
-            "success": False,
-            "mensaje": f"Error interno: {str(e)}"
-        })
+        res = jsonify({"autorizado": False, "success": False, "mensaje": f"Error interno: {str(e)}"})
 
     finally:
         if os.path.exists(temp_path):
@@ -315,7 +303,7 @@ def facecheck():
     res.headers.add("Access-Control-Allow-Origin", "*")
     return res, 200
 
-# Sincronización única al arrancar
+# Sincronizar Cloudinary al inicio
 sincronizar_desde_cloudinary()
 
 if __name__ == "__main__":
