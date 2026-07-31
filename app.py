@@ -1,5 +1,5 @@
 import os
-import datetime
+from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import gspread
@@ -14,13 +14,12 @@ os.makedirs(CARPETA_ROSTROS, exist_ok=True)
 # ----------------------------------------------------
 # CONFIGURACIÓN DE GOOGLE SHEETS
 # ----------------------------------------------------
-# Define los permisos para editar el Drive
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-# ID de tu Excel (El código largo que está en el link de tu Google Sheets)
+# ID de tu hoja de cálculo en Google Sheets
 SHEET_ID = '1PTZEluLo7IpHvWzvQ6SpCfbN9mSiRLKMO5fn1MfhDv0' 
 
 def conectar_sheets():
@@ -64,7 +63,7 @@ def login():
         return jsonify({"success": False, "error": "Usuario o PIN incorrectos."}), 401
 
 # ----------------------------------------------------
-# 3. CONFIRMAR ASISTENCIA (ESCRIBIR EN EXCEL)
+# 3. CONFIRMAR ASISTENCIA (AGREGAR FILA NUEVA ABAJO)
 # ----------------------------------------------------
 @app.route('/api/facecheck', methods=['POST'])
 def facecheck():
@@ -74,60 +73,45 @@ def facecheck():
     foto = request.files['photo']
     sheet_name = request.form.get('sheet_name', 'Asistencia seminario sibimbe')
 
-    # Aquí iría tu código de IA para reconocer la foto y sacar el nombre.
-    # Por ahora simulamos que la IA detectó a un alumno llamado "Juan Perez"
+    # Simulamos el resultado del modelo de IA
     reconocido = True
     usuario_detectado = "juan perez" 
     precision_obtenida = 98.5
 
     if reconocido:
-        # 🟢 LÓGICA PARA ESCRIBIR EN GOOGLE SHEETS
         documento = conectar_sheets()
         if documento:
             try:
                 hoja = documento.worksheet(sheet_name)
                 
-                # Obtener todos los datos de la hoja
-                datos = hoja.get_all_values()
+                # Obtener la fecha y la hora exactas
+                ahora = datetime.now()
+                dias_espanol = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
                 
-                # Fila 1 = Encabezados (Fechas, etc.)
-                encabezados = [str(e).strip().lower() for e in datos[0]]
+                nombre_limpio = usuario_detectado.strip().lower() # Columna A
+                dia_semana = dias_espanol[ahora.weekday()]       # Columna B
+                fecha_iso = ahora.strftime("%Y-%m-%d")            # Columna C
+                hora_iso = ahora.strftime("%H:%M:%S")             # Columna D
                 
-                # Fecha actual (Ejemplo: '2026-07-30' o el formato que uses)
-                fecha_hoy = datetime.datetime.now().strftime("%Y-%m-%d") 
+                # Fila estructurada: Nombre | Día | Fecha | Hora
+                nueva_fila = [nombre_limpio, dia_semana, fecha_iso, hora_iso]
                 
-                # Buscar la columna de la fecha de hoy
-                # Si no quieres fecha automática, tendrías que enviar el día desde la app.
-                if fecha_hoy not in encabezados:
-                    # Si no existe la fecha de hoy, la agregamos en la primera columna vacía
-                    col_fecha = len(encabezados) + 1
-                    hoja.update_cell(1, col_fecha, fecha_hoy)
-                else:
-                    col_fecha = encabezados.index(fecha_hoy) + 1
-
-                # Buscar la fila del alumno en la Columna A (índice 0)
-                fila_alumno = None
-                for i, fila in enumerate(datos):
-                    if len(fila) > 0 and fila[0].strip().lower() == usuario_detectado.lower():
-                        fila_alumno = i + 1 # Las celdas en gspread empiezan en 1
-                        break
-
-                if fila_alumno:
-                    # Anotar "Presente" en la intersección (Fila Alumno, Columna Fecha)
-                    hoja.update_cell(fila_alumno, col_fecha, "Presente")
-                else:
-                    return jsonify({"success": False, "mensaje": f"Alumno '{usuario_detectado}' no está en la lista de Excel."}), 400
+                # Insertar en la última línea disponible de Google Sheets
+                hoja.append_row(nueva_fila)
+                
+                return jsonify({
+                    "success": True,
+                    "autorizado": True,
+                    "usuario": nombre_limpio,
+                    "precision": precision_obtenida,
+                    "mensaje": f"✅ Asistencia registrada para {nombre_limpio} el {dia_semana}"
+                }), 200
 
             except Exception as e:
                 return jsonify({"success": False, "mensaje": f"Error escribiendo en Sheets: {e}"}), 500
-
-        return jsonify({
-            "success": True,
-            "autorizado": True,
-            "usuario": usuario_detectado,
-            "precision": precision_obtenida,
-            "mensaje": "Asistencia registrada correctamente en el Excel"
-        }), 200
+        else:
+            return jsonify({"success": False, "mensaje": "Error de conexión con Google Sheets"}), 500
+            
     else:
         return jsonify({"success": False, "autorizado": False, "mensaje": "Rostro no reconocido"}), 400
 
